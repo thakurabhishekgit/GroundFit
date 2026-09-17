@@ -5,10 +5,19 @@ All secrets stay in env — never hardcode API keys here.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# apps/api/app/core/config.py → repo root is parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_ENV_FILES = (
+    str(_REPO_ROOT / ".env"),
+    ".env",
+)
 
 
 class Settings(BaseSettings):
@@ -19,7 +28,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=("../../.env", ".env"),
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
     )

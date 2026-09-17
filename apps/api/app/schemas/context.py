@@ -24,9 +24,9 @@ class ExperienceContextOut(BaseModel):
 
 
 class SkillEvidenceIn(BaseModel):
-    source_type: str = Field(..., pattern="^(role|project)$")
+    source_type: str = Field(default="project", pattern="^(role|project)$")
     source_id: Optional[UUID] = None
-    summary: str
+    summary: str = Field(default="")
     metrics_json: Optional[dict[str, Any]] = None
     verified: bool = False
 
