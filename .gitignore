@@ -1,25 +1,12 @@
-# Dependencies
-node_modules/
-
-# Env / secrets
 .env
 .env.local
 .env.*.local
-
-# Neon local context may hold org details; keep project link but ignore env pulls if any
-.neon/env/
-
-# OS / IDE
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.log
-
-# Build
-dist/
-build/
-.next/
+node_modules/
 .venv/
 __pycache__/
 *.pyc
+dist/
+build/
+.DS_Store
+Thumbs.db
+*.log

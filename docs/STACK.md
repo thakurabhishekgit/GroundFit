@@ -6,8 +6,8 @@
 |-------|--------|-----|
 | Frontend | React + TypeScript + Vite | Familiar; deploys cleanly on Vercel |
 | Backend | FastAPI (Python) | Easiest OpenAI + structured JSON pipelines |
-| DB | **PostgreSQL on Neon (free)** | Relational skill graph, ACID, one place for data |
-| Vectors | **pgvector on Neon** (phase 1.5) | Free with same DB; enough for 10–15 users |
+| DB | **PostgreSQL** — local for dev, **Neon free** for cloud | Just a connection string. No Neon Auth / MCP / Functions / CLI platform |
+| Vectors | **pgvector** (phase 1.5, same Postgres) | Optional later; same DB |
 | Auth | **Google OAuth** | Fast, no password UX |
 | LLM | **OpenAI** | Structured outputs / JSON schema |
 | Web host | **Vercel** (Hobby) | Free static/SPA or Next later |

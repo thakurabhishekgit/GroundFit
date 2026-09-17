@@ -12,8 +12,8 @@
 |------|--------|--------|
 | **Name** | GroundFit | |
 | **Auth** | Google OAuth | Via Auth.js (frontend) or FastAPI Google ID token verify |
-| **Primary DB** | **PostgreSQL (Neon free)** | Profiles, skill graph, resumes, alignment runs |
-| **Vectors (later)** | **pgvector on Neon** | Same DB — no extra bill. Optional Qdrant Cloud free if needed |
+| **Primary DB** | **PostgreSQL** (local dev + Neon free for cloud) | Connection string only — no Neon MCP/Auth/Functions |
+| **Vectors (later)** | **pgvector** (same Postgres) | Optional when context gets large |
 | **LLM** | **OpenAI** | API is **usage-billed** (hosting can be free; tokens are not) |
 | **Frontend** | React + TypeScript + Vite → **Vercel** | Free Hobby tier |
 | **Backend** | FastAPI → **Render** (free web service) | Cold starts OK for 10–15 users |
@@ -78,6 +78,7 @@ groundfit/
 | [docs/RAG_AND_VECTOR.md](docs/RAG_AND_VECTOR.md) | When/why RAG; pgvector vs Atlas vs Qdrant |
 | [docs/MVP_ROADMAP.md](docs/MVP_ROADMAP.md) | 2–3 week build plan |
 | [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) | Remaining choices |
+| [docs/AUTH_GOOGLE.md](docs/AUTH_GOOGLE.md) | Google OAuth local setup (ports 2000 / 7000) |
 
 ---
 
