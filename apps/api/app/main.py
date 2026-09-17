@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
@@ -19,11 +20,18 @@ import app.models  # noqa: F401 — register ORM metadata
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
-    Startup: create tables if missing (MVP; switch to Alembic migrations in prod).
+    Startup: create tables if missing + lightweight column patches.
     Shutdown: dispose engine pool.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Safe additive patch for DBs created before match_report_json existed
+        await conn.execute(
+            text(
+                "ALTER TABLE alignment_runs "
+                "ADD COLUMN IF NOT EXISTS match_report_json JSONB"
+            )
+        )
     yield
     await engine.dispose()
 

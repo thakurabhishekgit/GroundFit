@@ -29,15 +29,14 @@ async def start_align(
     """
     Pipeline: extract JD skills → match graph → rewrite sections → verify.
 
-    Returns run with result_latex + warnings. Strict mode never invents
-    missing skills; warnings list orphans for UI confirm.
+    Returns draft LaTeX + warnings. Use /confirm for Add/Skip (no regen),
+    then /finalize for a single final rewrite.
     """
     try:
         run = await align_service.run_alignment(db, user, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        # run row may already be marked failed
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Alignment failed: {exc}",
@@ -55,7 +54,7 @@ async def get_align(run_id: UUID, user: CurrentUser, db: DbSession) -> Alignment
 @router.post(
     "/{run_id}/confirm",
     response_model=AlignmentRunOut,
-    summary="Confirm warning overrides on an alignment run",
+    summary="Save Add/Skip decisions (does not regenerate LaTeX)",
 )
 async def confirm_align(
     run_id: UUID,
@@ -64,27 +63,39 @@ async def confirm_align(
     db: DbSession,
 ) -> AlignmentRunOut:
     """
-    Record user decisions on warnings (add_anyway / skip / use_suggestion).
+    Record user decisions on warnings only.
 
-    MVP stores actions on warnings_json; full re-rewrite on override can come later.
+    Does NOT call OpenAI. Click Finalize Resume after decisions are complete.
     """
     run = await _get_owned_run(db, user.id, run_id)
-    warnings = list(run.warnings_json or [])
-    action_map = {
-        str(a.get("token")): a.get("user_action")
-        for a in payload.actions
-        if a.get("token")
-    }
-    for warning in warnings:
-        token = str(warning.get("token"))
-        if token in action_map:
-            warning["user_action"] = action_map[token]
-    run.warnings_json = warnings
-    run.status = "done"
-    run.updated_by_id = user.id
-    await db.commit()
-    await db.refresh(run)
-    return AlignmentRunOut.model_validate(run)
+    updated = await align_service.save_warning_decisions(db, run, payload.actions, user)
+    return AlignmentRunOut.model_validate(updated)
+
+
+@router.post(
+    "/{run_id}/finalize",
+    response_model=AlignmentRunOut,
+    summary="One-shot final LaTeX rewrite after Add/Skip decisions",
+)
+async def finalize_align(
+    run_id: UUID,
+    user: CurrentUser,
+    db: DbSession,
+) -> AlignmentRunOut:
+    """
+    Regenerate LaTeX once using add_anyway overrides; skipped tokens stay out.
+
+    Project count is enforced — no add/remove projects.
+    """
+    run = await _get_owned_run(db, user.id, run_id)
+    try:
+        updated = await align_service.finalize_alignment(db, run, user)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Finalize failed: {exc}",
+        ) from exc
+    return AlignmentRunOut.model_validate(updated)
 
 
 async def _get_owned_run(db: DbSession, user_id: UUID, run_id: UUID) -> AlignmentRun:

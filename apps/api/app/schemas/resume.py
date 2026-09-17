@@ -32,7 +32,7 @@ class AlignRequest(BaseModel):
 
 
 class AlignConfirmRequest(BaseModel):
-    """Apply user decisions on warnings (override / skip)."""
+    """Apply user decisions on warnings (override / skip) — no LaTeX regen."""
 
     actions: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -48,7 +48,8 @@ class AlignmentRunOut(BaseModel):
     jd_text: str
     mode: str
     result_latex: Optional[str] = None
-    changelog_json: Optional[list[Any]] = None
+    changelog_json: Optional[Any] = None
+    match_report_json: Optional[dict[str, Any]] = None
     warnings_json: Optional[list[Any]] = None
     coverage_score: Optional[float] = None
     status: str

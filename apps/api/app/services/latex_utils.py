@@ -95,6 +95,13 @@ def normalize_skill_name(raw: str) -> str:
         "node": "node.js",
         "postgres": "postgresql",
         "gcp": "google-cloud",
+        "mssql": "microsoft-sql-server",
+        "sqlserver": "sql-server",
+        "ms-sql-server": "microsoft-sql-server",
+        "rest-apis": "rest",
+        "restful-apis": "rest",
+        "reactjs": "react",
+        "react.js": "react",
     }
     slug = re.sub(r"[^a-z0-9.+#]+", "-", raw.strip().lower()).strip("-")
     return aliases.get(slug, slug)

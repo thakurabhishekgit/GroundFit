@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import type { AlignmentRun, Skill } from "../lib/api";
+import type { AlignmentRun, Resume, Skill } from "../lib/api";
+import { latexToPreviewHtml } from "../lib/latexPreview";
 
 type DraftSkill = {
   name: string;
@@ -14,11 +15,30 @@ type RightMode = "draft" | "saved";
 
 export function AppLayout() {
   const { user, loading, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   if (loading) {
     return <div className="loading-center">Loading…</div>;
   }
   if (!user) return <Navigate to="/" replace />;
+
+  const initials = (user.name || user.email || "?")
+    .split(/\s+/)
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="app-shell">
@@ -27,17 +47,57 @@ export function AppLayout() {
           <Link to="/app">
             <h1 className="brand">GroundFit</h1>
           </Link>
-          <span className="app-nav-user">{user.name || user.email}</span>
         </div>
         <nav className="nav-links">
           <NavLink to="/app" end>
             Context
           </NavLink>
           <NavLink to="/app/align">Align</NavLink>
-          <NavLink to="/app/profile">Profile</NavLink>
-          <button type="button" className="btn btn-ghost" onClick={logout}>
-            Log out
-          </button>
+          <div className="profile-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="avatar-btn"
+              aria-label="Account menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {user.picture_url ? (
+                <img
+                  src={user.picture_url}
+                  alt=""
+                  className="nav-avatar"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="nav-avatar nav-avatar-fallback">{initials}</span>
+              )}
+            </button>
+            {menuOpen && (
+              <div className="profile-dropdown">
+                <div className="profile-dropdown-head">
+                  <strong>{user.name || "Account"}</strong>
+                  <span className="muted">{user.email}</span>
+                </div>
+                <Link
+                  to="/app/profile"
+                  className="profile-dropdown-item"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Profile
+                </Link>
+                <button
+                  type="button"
+                  className="profile-dropdown-item danger"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    logout();
+                  }}
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+          </div>
         </nav>
       </header>
       <main className="app-main">
@@ -233,7 +293,12 @@ export function AlignPage() {
   );
   const [jd, setJd] = useState("");
   const [run, setRun] = useState<AlignmentRun | null>(null);
+  const [resultTab, setResultTab] = useState<"warnings" | "matching" | "latex" | "preview">(
+    "warnings"
+  );
   const [busy, setBusy] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function onAlign(e: FormEvent) {
@@ -241,12 +306,17 @@ export function AlignPage() {
     if (!token) return;
     setBusy(true);
     setError(null);
+    setFlash(null);
     setRun(null);
+    setResultTab("warnings");
     try {
       const { api } = await import("../lib/api");
       const created = await api.createResume(token, title, latex);
       const result = await api.align(token, created.id, jd, "strict");
       setRun(result);
+      if ((result.warnings_json || []).length === 0) {
+        setResultTab("latex");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Align failed");
     } finally {
@@ -256,19 +326,108 @@ export function AlignPage() {
 
   async function onWarningAction(tokenName: string, user_action: string) {
     if (!token || !run) return;
-    const { api } = await import("../lib/api");
-    const updated = await api.confirmAlign(token, run.id, [
-      { token: tokenName, user_action },
-    ]);
-    setRun(updated);
+    const norm = tokenName;
+    setRun((prev) => {
+      if (!prev) return prev;
+      const warnings = (prev.warnings_json || []).map((w) =>
+        w.token === norm ? { ...w, user_action, saved: true } : w
+      );
+      return { ...prev, warnings_json: warnings, status: "needs_review" };
+    });
+    try {
+      const { api } = await import("../lib/api");
+      const updated = await api.confirmAlign(token, run.id, [
+        { token: tokenName, user_action },
+      ]);
+      setRun((prev) => {
+        const serverWarnings = updated.warnings_json || [];
+        const localMap = new Map(
+          (prev?.warnings_json || [])
+            .filter((w) => w.user_action)
+            .map((w) => [w.token, w.user_action as string])
+        );
+        for (const w of serverWarnings) {
+          if (w.user_action) localMap.set(w.token, w.user_action);
+        }
+        localMap.set(norm, user_action);
+        const merged = serverWarnings.map((w) => ({
+          ...w,
+          user_action: localMap.get(w.token) ?? w.user_action,
+          saved: Boolean(localMap.get(w.token) ?? w.user_action),
+        }));
+        const pending = merged.filter((w) => !w.user_action).length;
+        return {
+          ...updated,
+          warnings_json: merged,
+          status: pending ? "needs_review" : "awaiting_finalize",
+        };
+      });
+      setFlash(
+        user_action === "add_anyway"
+          ? `Saved: will include “${tokenName}” on Finalize (no LaTeX regen yet).`
+          : `Saved: will skip “${tokenName}” on Finalize (no LaTeX regen yet).`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save decision");
+    }
   }
+
+  async function onFinalize() {
+    if (!token || !run) return;
+    setFinalizing(true);
+    setError(null);
+    setFlash(null);
+    try {
+      const { api } = await import("../lib/api");
+      // Persist any remaining as skip first (one batch)
+      const pending = (run.warnings_json || []).filter((w) => !w.user_action);
+      if (pending.length) {
+        await api.confirmAlign(
+          token,
+          run.id,
+          pending.map((w) => ({ token: w.token, user_action: "skip" }))
+        );
+      }
+      const updated = await api.finalizeAlign(token, run.id);
+      setRun(updated);
+      setResultTab("preview");
+      setFlash("Final resume generated once. Projects kept from your original LaTeX.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Finalize failed");
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
+  function downloadLatex() {
+    if (!run?.result_latex) return;
+    const blob = new Blob([run.result_latex], { type: "application/x-tex" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "groundfit-aligned.tex";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const report = run?.match_report_json;
+  const coverageLabel =
+    report?.coverage?.label ||
+    (run?.coverage_score != null
+      ? `Coverage ${Math.round((run.coverage_score || 0) * 100)}% of JD must-haves in your context`
+      : null);
+  const pendingWarnings = (run?.warnings_json || []).filter((w) => !w.user_action);
+  const decidedCount = (run?.warnings_json || []).filter((w) => w.user_action).length;
 
   return (
     <div className="page-fixed">
       <form className="grid-2" onSubmit={onAlign}>
         <div className="card">
           <h2 className="panel-title">Resume + JD</h2>
-          <p className="panel-sub muted">Strict mode — no invented skills without a warning.</p>
+          <p className="panel-sub muted">
+            Strict mode — no new/removed projects; only rephrase existing content. Add/Skip
+            saves decisions; Finalize regenerates LaTeX once.
+          </p>
           <div className="field">
             <label htmlFor="title">Resume title</label>
             <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -295,45 +454,166 @@ export function AlignPage() {
         </div>
 
         <div className="card">
-          <h2 className="panel-title">Result</h2>
-          {!run && <p className="muted">Aligned LaTeX and warnings will show here.</p>}
+          <div className="result-head">
+            <h2 className="panel-title" style={{ margin: 0 }}>
+              Result
+            </h2>
+            {run && (
+              <div className="result-tabs">
+                {(
+                  [
+                    ["warnings", "Warnings"],
+                    ["matching", "Matching"],
+                    ["latex", "LaTeX"],
+                    ["preview", "Preview"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`result-tab${resultTab === id ? " active" : ""}`}
+                    onClick={() => setResultTab(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {!run && <p className="muted">Aligned output will show here.</p>}
+
           {run && (
             <>
-              <div className="row" style={{ marginBottom: "0.75rem" }}>
+              <div className="row" style={{ marginBottom: "0.65rem" }}>
                 <span className="pill">status: {run.status}</span>
-                {run.coverage_score != null && (
-                  <span className="pill">coverage: {run.coverage_score}</span>
-                )}
+                {coverageLabel && <span className="pill">{coverageLabel}</span>}
               </div>
-              <div className="panel-scroll">
-                {(run.warnings_json || []).map((w) => (
-                  <div key={w.token} className="warn-box">
-                    <strong>{w.token}</strong>
-                    <div className="muted">{w.reason}</div>
-                    <div className="row" style={{ marginTop: "0.5rem" }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => onWarningAction(w.token, "add_anyway")}
-                      >
-                        Add anyway
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => onWarningAction(w.token, "skip")}
-                      >
-                        Skip
-                      </button>
-                      {w.user_action && <span className="pill">{w.user_action}</span>}
-                    </div>
+              {flash && <p className="saved-flash">{flash}</p>}
+
+              {resultTab === "warnings" && (
+                <>
+                  <div className="panel-scroll">
+                    {(run.warnings_json || []).length === 0 ? (
+                      <p className="muted">No warnings — all JD must-haves were covered.</p>
+                    ) : (
+                      (run.warnings_json || []).map((w) => (
+                        <div
+                          key={w.token}
+                          className={`warn-box${w.user_action ? " decided" : ""}`}
+                        >
+                          <strong>{w.token}</strong>
+                          <div className="muted">{w.reason}</div>
+                          <div className="row" style={{ marginTop: "0.5rem" }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => onWarningAction(w.token, "add_anyway")}
+                            >
+                              Add anyway
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => onWarningAction(w.token, "skip")}
+                            >
+                              Skip
+                            </button>
+                            {w.user_action && (
+                              <span className="pill">
+                                saved · {w.user_action}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
-                ))}
-                <div className="field" style={{ minHeight: "200px", display: "flex" }}>
+                  <div className="panel-footer">
+                    <p className="muted" style={{ margin: "0 0 0.65rem", fontSize: "0.85rem" }}>
+                      Add/Skip only saves your choice ({decidedCount} saved
+                      {pendingWarnings.length ? `, ${pendingWarnings.length} left` : ""}).
+                      LaTeX is regenerated once when you finalize.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={onFinalize}
+                      disabled={finalizing}
+                    >
+                      {finalizing
+                        ? "Finalizing…"
+                        : pendingWarnings.length > 0
+                          ? `Finalize Resume (skip ${pendingWarnings.length} undecided)`
+                          : "Finalize Resume"}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {resultTab === "matching" && (
+                <div className="panel-scroll">
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    <strong>Coverage</strong> = share of JD <em>must-have</em> skills that
+                    appear in your saved skill graph (including synonyms like jpa →
+                    spring-boot). It is not an ATS score.
+                  </p>
+                  <h3 style={{ fontSize: "0.95rem", marginBottom: "0.35rem" }}>Matched must-haves</h3>
+                  <div className="match-list">
+                    {(report?.matched_must || []).length === 0 && (
+                      <span className="muted">None</span>
+                    )}
+                    {(report?.matched_must || []).map((s) => (
+                      <span key={s} className="match-chip ok">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                  <h3 style={{ fontSize: "0.95rem", marginBottom: "0.35rem" }}>Missing must-haves</h3>
+                  <div className="match-list">
+                    {(report?.missing_must || []).length === 0 && (
+                      <span className="muted">None</span>
+                    )}
+                    {(report?.missing_must || []).map((s) => (
+                      <span key={s} className="match-chip bad">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                  <h3 style={{ fontSize: "0.95rem", marginBottom: "0.35rem" }}>Matched nice-to-haves</h3>
+                  <div className="match-list">
+                    {(report?.matched_nice || []).map((s) => (
+                      <span key={s} className="match-chip ok">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                  <h3 style={{ fontSize: "0.95rem", marginBottom: "0.35rem" }}>JD must-have list</h3>
+                  <div className="match-list">
+                    {(report?.must_have || []).map((s) => (
+                      <span key={s} className="match-chip">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {resultTab === "latex" && (
+                <div className="field grow" style={{ display: "flex", minHeight: 0 }}>
                   <label>Aligned LaTeX</label>
                   <textarea readOnly value={run.result_latex || ""} style={{ flex: 1 }} />
+                  <div className="panel-footer">
+                    <button type="button" className="btn btn-ghost" onClick={downloadLatex}>
+                      Download .tex
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {resultTab === "preview" && (
+                <ResumePreview latex={run.result_latex || ""} onDownload={downloadLatex} />
+              )}
             </>
           )}
         </div>
@@ -343,11 +623,13 @@ export function AlignPage() {
 }
 
 export function ProfilePage() {
-  const { user, token } = useAuth();
+  const { user, token, logout } = useAuth();
   const [skillCount, setSkillCount] = useState(0);
-  const [resumeCount, setResumeCount] = useState(0);
   const [hasContext, setHasContext] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [selectedResume, setSelectedResume] = useState<Resume | null>(null);
+  const [resumeTab, setResumeTab] = useState<"preview" | "latex">("preview");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -355,19 +637,30 @@ export function ProfilePage() {
     void (async () => {
       try {
         const { api } = await import("../lib/api");
-        const [ctx, resumes] = await Promise.all([
+        const [ctx, resumeList] = await Promise.all([
           api.getContext(token),
           api.listResumes(token),
         ]);
         setSkills(ctx.skills);
         setSkillCount(ctx.skills.length);
         setHasContext(Boolean(ctx.context?.raw_text?.trim()));
-        setResumeCount(resumes.length);
+        setResumes(resumeList);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load profile");
       }
     })();
   }, [token]);
+
+  function downloadSelected() {
+    if (!selectedResume) return;
+    const blob = new Blob([selectedResume.latex_source], { type: "application/x-tex" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedResume.title.replace(/\s+/g, "-").toLowerCase() || "resume"}.tex`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   if (!user) return null;
 
@@ -390,45 +683,156 @@ export function ProfilePage() {
             <span className="pill">Google linked</span>
             <span className="pill">{user.is_active ? "Active" : "Inactive"}</span>
           </div>
-          <p className="muted" style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>
-            ID {user.id}
-          </p>
+          <button type="button" className="btn btn-ghost" onClick={logout}>
+            Log out
+          </button>
           {error && <p className="error">{error}</p>}
         </div>
 
-        <div className="card" style={{ overflow: "hidden" }}>
-          <h2 className="panel-title">Your GroundFit data</h2>
-          <p className="panel-sub muted">Account snapshot from your saved context and resumes.</p>
-          <div className="stat-row" style={{ marginBottom: "1rem" }}>
-            <div className="stat">
-              <strong>{skillCount}</strong>
-              <span>Skills in graph</span>
-            </div>
-            <div className="stat">
-              <strong>{resumeCount}</strong>
-              <span>Resume versions</span>
-            </div>
-            <div className="stat">
-              <strong>{hasContext ? "Yes" : "No"}</strong>
-              <span>Context saved</span>
-            </div>
-          </div>
-          <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>Skill inventory</h3>
-          <div className="panel-scroll">
-            {skills.length === 0 ? (
-              <p className="muted">No skills yet — add them on the Context page.</p>
-            ) : (
-              skills.map((s) => (
-                <div className="skill-item" key={s.id}>
-                  <strong>{s.display_name || s.name}</strong>
-                  <span className="muted"> · {s.category || "skill"}</span>
-                  <span className="muted"> · {s.evidence?.length || 0} evidence</span>
+        <div className="card" style={{ overflow: "hidden", minHeight: 0 }}>
+          {!selectedResume ? (
+            <>
+              <h2 className="panel-title">Your GroundFit data</h2>
+              <p className="panel-sub muted">
+                Skills from your work/project context, plus saved resume versions.
+              </p>
+              <div className="stat-row" style={{ marginBottom: "1rem" }}>
+                <div className="stat">
+                  <strong>{skillCount}</strong>
+                  <span>Skills in graph</span>
                 </div>
-              ))
-            )}
-          </div>
+                <div className="stat">
+                  <strong>{resumes.length}</strong>
+                  <span>Resume versions</span>
+                </div>
+                <div className="stat">
+                  <strong>{hasContext ? "Yes" : "No"}</strong>
+                  <span>Context saved</span>
+                </div>
+              </div>
+
+              <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>Resume versions</h3>
+              <div className="panel-scroll" style={{ maxHeight: "28%", marginBottom: "0.75rem" }}>
+                {resumes.length === 0 ? (
+                  <p className="muted">No resumes saved yet — create one on Align.</p>
+                ) : (
+                  resumes.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      className="resume-row"
+                      onClick={() => {
+                        setSelectedResume(r);
+                        setResumeTab("preview");
+                      }}
+                    >
+                      <div>
+                        <strong>{r.title}</strong>
+                        <div className="muted" style={{ fontSize: "0.78rem" }}>
+                          v{r.version}
+                          {r.updated_at
+                            ? ` · ${new Date(r.updated_at).toLocaleString()}`
+                            : ""}
+                        </div>
+                      </div>
+                      <span className="pill">View</span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>Skill inventory</h3>
+              <div className="panel-scroll">
+                {skills.length === 0 ? (
+                  <p className="muted">No skills yet — add them on the Context page.</p>
+                ) : (
+                  skills.map((s) => (
+                    <div className="skill-item" key={s.id}>
+                      <strong>{s.display_name || s.name}</strong>
+                      <span className="muted"> · {s.category || "skill"}</span>
+                      <span className="muted"> · {s.evidence?.length || 0} evidence</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="result-head">
+                <div>
+                  <h2 className="panel-title" style={{ margin: 0 }}>
+                    {selectedResume.title}
+                  </h2>
+                  <p className="muted" style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+                    Version {selectedResume.version}
+                  </p>
+                </div>
+                <div className="result-tabs">
+                  <button
+                    type="button"
+                    className={`result-tab${resumeTab === "preview" ? " active" : ""}`}
+                    onClick={() => setResumeTab("preview")}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    className={`result-tab${resumeTab === "latex" ? " active" : ""}`}
+                    onClick={() => setResumeTab("latex")}
+                  >
+                    LaTeX
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setSelectedResume(null)}
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+              {resumeTab === "preview" ? (
+                <ResumePreview latex={selectedResume.latex_source} onDownload={downloadSelected} />
+              ) : (
+                <div className="field grow" style={{ display: "flex", minHeight: 0, flex: 1 }}>
+                  <label>LaTeX source</label>
+                  <textarea readOnly value={selectedResume.latex_source} style={{ flex: 1 }} />
+                  <div className="panel-footer">
+                    <button type="button" className="btn btn-ghost" onClick={downloadSelected}>
+                      Download .tex
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ResumePreview({
+  latex,
+  onDownload,
+}: {
+  latex: string;
+  onDownload: () => void;
+}) {
+  const html = useMemo(() => latexToPreviewHtml(latex), [latex]);
+
+  return (
+    <div className="preview-frame">
+      <div className="preview-toolbar">
+        <button type="button" className="btn btn-ghost" onClick={onDownload}>
+          Download .tex
+        </button>
+        <span className="pill">Live resume preview</span>
+      </div>
+      <div
+        className="preview-html"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     </div>
   );
 }

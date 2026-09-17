@@ -28,6 +28,8 @@ export type Resume = {
   title: string;
   latex_source: string;
   version: number;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type AlignmentRun = {
@@ -36,8 +38,22 @@ export type AlignmentRun = {
   jd_text: string;
   mode: string;
   result_latex?: string | null;
-  warnings_json?: { token: string; reason: string; user_action?: string | null }[] | null;
-  changelog_json?: unknown[] | null;
+  warnings_json?: {
+    token: string;
+    reason: string;
+    user_action?: string | null;
+    saved?: boolean;
+  }[] | null;
+  match_report_json?: {
+    must_have?: string[];
+    nice_to_have?: string[];
+    matched_must?: string[];
+    missing_must?: string[];
+    matched_nice?: string[];
+    missing_nice?: string[];
+    coverage?: { matched: number; total: number; score: number; label: string };
+  } | null;
+  changelog_json?: unknown;
   coverage_score?: number | null;
   status: string;
   error_message?: string | null;
@@ -141,5 +157,11 @@ export const api = {
       method: "POST",
       token,
       body: JSON.stringify({ actions }),
+    }),
+
+  finalizeAlign: (token: string, run_id: string) =>
+    request<AlignmentRun>(`/api/v1/align/${run_id}/finalize`, {
+      method: "POST",
+      token,
     }),
 };
