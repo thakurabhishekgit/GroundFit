@@ -11,6 +11,8 @@ export type User = {
   picture_url?: string | null;
   google_sub: string;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type Skill = {

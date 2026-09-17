@@ -16,8 +16,7 @@ Edit repo-root `.env`:
 ## API
 ```bash
 cd apps/api
-python -m venv .venv
-# Windows:
+py -3 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 7000

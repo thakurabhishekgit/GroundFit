@@ -47,6 +47,7 @@ Rules:
 - Never invent employers, metrics, or tools not supported by the text.
 - Evidence summaries must say WHERE and WHY the skill was used.
 - Prefer fewer high-quality evidence items over spam.
+- notes must be a single string (not an array).
 """.strip()
 
 

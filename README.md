@@ -79,6 +79,7 @@ groundfit/
 | [docs/MVP_ROADMAP.md](docs/MVP_ROADMAP.md) | 2–3 week build plan |
 | [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) | Remaining choices |
 | [docs/AUTH_GOOGLE.md](docs/AUTH_GOOGLE.md) | Google OAuth local setup (ports 2000 / 7000) |
+| [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) | How to run API + web locally |
 
 ---
 
@@ -91,7 +92,7 @@ See [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md).
 
 ```bash
 # API
-cd apps/api && python -m venv .venv && .venv\Scripts\activate
+cd apps/api && py -3 -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 7000
 

@@ -3,10 +3,11 @@
 .env.*.local
 node_modules/
 .venv/
-__pycache__/
+**/__pycache__/
 *.pyc
 dist/
 build/
 .DS_Store
 Thumbs.db
 *.log
+apps/web/dist/

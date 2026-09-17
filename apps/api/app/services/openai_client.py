@@ -18,6 +18,27 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
+def _model_allows_custom_temperature(model: str) -> bool:
+    """
+    Some chat models only accept the default temperature (1).
+
+    Passing 0 / 0.1 / 0.2 returns HTTP 400 unsupported_value.
+    """
+    name = (model or "").lower()
+    # Restricted families / aliases (extend as needed)
+    blocked_markers = ("luna", "o1", "o3", "gpt-5")
+    return not any(marker in name for marker in blocked_markers)
+
+
+def _chat_kwargs(*, temperature: Optional[float]) -> dict[str, Any]:
+    """Build create() kwargs; omit temperature when the model forbids it."""
+    settings = get_settings()
+    kwargs: dict[str, Any] = {"model": settings.openai_chat_model}
+    if temperature is not None and _model_allows_custom_temperature(settings.openai_chat_model):
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 async def chat_json(
     *,
     system: str,
@@ -30,12 +51,10 @@ async def chat_json(
     Uses response_format json_object when the model supports it.
     Falls back to stripping markdown fences if needed.
     """
-    settings = get_settings()
     client = get_openai_client()
 
     response = await client.chat.completions.create(
-        model=settings.openai_chat_model,
-        temperature=temperature,
+        **_chat_kwargs(temperature=temperature),
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system},
@@ -53,11 +72,9 @@ async def chat_text(
     temperature: float = 0.3,
 ) -> str:
     """Call the chat model and return plain text (e.g. LaTeX fragment)."""
-    settings = get_settings()
     client = get_openai_client()
     response = await client.chat.completions.create(
-        model=settings.openai_chat_model,
-        temperature=temperature,
+        **_chat_kwargs(temperature=temperature),
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},

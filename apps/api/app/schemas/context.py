@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ExperienceContextUpsert(BaseModel):
@@ -93,6 +93,17 @@ class ExtractPreviewOut(BaseModel):
     roles: list[dict[str, Any]] = Field(default_factory=list)
     projects: list[dict[str, Any]] = Field(default_factory=list)
     notes: Optional[str] = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def coerce_notes_to_str(cls, value: Any) -> Optional[str]:
+        """LLMs sometimes return notes as a list of strings — join them."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            parts = [str(item).strip() for item in value if item is not None and str(item).strip()]
+            return " ".join(parts) if parts else None
+        return str(value)
 
 
 class ConfirmGraphRequest(BaseModel):
