@@ -124,46 +124,123 @@ async def confirm_skill_graph(
     """
     Persist user-reviewed skills + evidence.
 
-    If replace_existing, soft-deletes prior skills for this user first.
+    Default (replace_existing=False): merge into the existing graph —
+    keep prior skills, upsert overlaps, append non-duplicate evidence.
+    replace_existing=True: soft-delete skills missing from the payload and
+    refresh evidence on skills that remain.
     """
-    if payload.replace_existing:
-        existing = await db.execute(
-            select(Skill).where(Skill.user_id == user.id, Skill.is_deleted.is_(False))
-        )
-        for skill in existing.scalars().all():
-            skill.is_deleted = True
-            skill.updated_by_id = user.id
-
-    saved: list[Skill] = []
+    # Merge duplicate names in the payload (e.g. React listed twice)
+    merged: dict[str, SkillIn] = {}
     for skill_in in payload.skills:
-        skill = Skill(
-            user_id=user.id,
-            name=normalize_skill_name(skill_in.name),
-            display_name=skill_in.display_name or skill_in.name,
-            category=skill_in.category,
-            proficiency=skill_in.proficiency,
-            created_by_id=user.id,
-            updated_by_id=user.id,
-        )
-        db.add(skill)
-        await db.flush()
-        for ev in skill_in.evidence:
+        name = normalize_skill_name(skill_in.name)
+        if not name:
+            continue
+        if name not in merged:
+            merged[name] = SkillIn(
+                name=name,
+                display_name=skill_in.display_name or skill_in.name,
+                category=skill_in.category,
+                proficiency=skill_in.proficiency,
+                evidence=list(skill_in.evidence or []),
+            )
+        else:
+            existing_in = merged[name]
+            if skill_in.display_name and not existing_in.display_name:
+                existing_in.display_name = skill_in.display_name
+            if skill_in.category and not existing_in.category:
+                existing_in.category = skill_in.category
+            existing_in.evidence = list(existing_in.evidence or []) + list(
+                skill_in.evidence or []
+            )
+
+    result = await db.execute(
+        select(Skill)
+        .where(Skill.user_id == user.id)
+        .options(selectinload(Skill.evidence))
+    )
+    by_name: dict[str, Skill] = {
+        normalize_skill_name(s.name): s for s in result.scalars().unique().all()
+    }
+
+    incoming_names = set(merged.keys())
+
+    if payload.replace_existing:
+        for name, skill in by_name.items():
+            if name not in incoming_names and not skill.is_deleted:
+                skill.is_deleted = True
+                skill.updated_by_id = user.id
+                for ev in skill.evidence:
+                    if not ev.is_deleted:
+                        ev.is_deleted = True
+                        ev.updated_by_id = user.id
+
+    for name, skill_in in merged.items():
+        skill = by_name.get(name)
+        if skill is None:
+            skill = Skill(
+                user_id=user.id,
+                name=name,
+                display_name=skill_in.display_name or skill_in.name,
+                category=skill_in.category,
+                proficiency=skill_in.proficiency,
+                created_by_id=user.id,
+                updated_by_id=user.id,
+            )
+            db.add(skill)
+            await db.flush()
+            by_name[name] = skill
+            existing_summaries: set[str] = set()
+        else:
+            skill.is_deleted = False
+            skill.display_name = skill_in.display_name or skill.display_name or name
+            skill.category = skill_in.category or skill.category
+            skill.proficiency = skill_in.proficiency or skill.proficiency
+            skill.updated_by_id = user.id
+            if payload.replace_existing:
+                for ev in skill.evidence:
+                    if not ev.is_deleted:
+                        ev.is_deleted = True
+                        ev.updated_by_id = user.id
+                existing_summaries = set()
+            else:
+                existing_summaries = {
+                    (e.summary or "").strip().lower()
+                    for e in skill.evidence
+                    if not e.is_deleted
+                }
+
+        for ev in skill_in.evidence or []:
+            summary = (ev.summary or "").strip()
+            if not summary:
+                continue
+            # On merge, skip evidence we already stored for this skill
+            if not payload.replace_existing and summary.lower() in existing_summaries:
+                continue
+            existing_summaries.add(summary.lower())
             db.add(
                 SkillEvidence(
                     skill_id=skill.id,
                     source_type=ev.source_type,
                     source_id=ev.source_id,
-                    summary=ev.summary,
+                    summary=summary,
                     metrics_json=ev.metrics_json,
-                    verified=ev.verified or True,
+                    verified=True if ev.verified is None else ev.verified,
                     created_by_id=user.id,
                     updated_by_id=user.id,
                 )
             )
-        saved.append(skill)
 
     await db.commit()
-    return saved
+
+    out_result = await db.execute(
+        select(Skill)
+        .where(Skill.user_id == user.id, Skill.is_deleted.is_(False))
+        .options(selectinload(Skill.evidence))
+    )
+    skills = list(out_result.scalars().unique().all())
+    for skill in skills:
+        skill.evidence = [e for e in skill.evidence if not e.is_deleted]
+    return skills
 
 
 async def get_context_bundle(db: AsyncSession, user: User) -> ContextBundleOut:

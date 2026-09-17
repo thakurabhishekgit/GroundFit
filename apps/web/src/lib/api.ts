@@ -125,11 +125,11 @@ export const api = {
       body: JSON.stringify({ raw_text }),
     }),
 
-  confirmContext: (token: string, skills: unknown[]) =>
+  confirmContext: (token: string, skills: unknown[], replace_existing = false) =>
     request<Skill[]>("/api/v1/context/confirm", {
       method: "POST",
       token,
-      body: JSON.stringify({ skills, replace_existing: true }),
+      body: JSON.stringify({ skills, replace_existing }),
     }),
 
   listResumes: (token: string) => request<Resume[]>("/api/v1/resumes", { token }),

@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import type { AlignmentRun, Resume, Skill } from "../lib/api";
 import { latexToPreviewHtml } from "../lib/latexPreview";
+import { loadStoredLatex, saveStoredLatex } from "../lib/resumeStorage";
 
 type DraftSkill = {
   name: string;
@@ -161,7 +162,9 @@ export function ContextPage() {
       const skills = await api.confirmContext(token, draftSkills);
       setSavedSkills(skills);
       setRightMode("saved");
-      setMessage(`Saved ${skills.length} skills to your graph.`);
+      setMessage(
+        `Merged into your graph — ${skills.length} skills total (kept past skills, added new ones).`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Confirm failed");
     } finally {
@@ -254,8 +257,11 @@ export function ContextPage() {
                     onClick={onConfirm}
                     disabled={busy}
                   >
-                    Confirm & save graph
+                    {busy ? "Saving…" : "Confirm & merge into graph"}
                   </button>
+                  <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+                    Keeps skills you already saved; only adds missing ones / new evidence.
+                  </p>
                 </div>
               </>
             )
@@ -288,9 +294,7 @@ export function ContextPage() {
 export function AlignPage() {
   const { token } = useAuth();
   const [title, setTitle] = useState("Base resume");
-  const [latex, setLatex] = useState(
-    `\\documentclass{article}\n\\begin{document}\n\\section{Summary}\nSoftware engineer.\n\\section{Experience}\n\\begin{itemize}\n  \\item Built services with Java and Spring Boot.\n\\end{itemize}\n\\section{Projects}\n\\begin{itemize}\n  \\item Freshdesk agent with Redis cache.\n\\end{itemize}\n\\section{Skills}\nJava, Spring Boot, Redis\n\\end{document}`
-  );
+  const [latex, setLatex] = useState(() => loadStoredLatex());
   const [jd, setJd] = useState("");
   const [run, setRun] = useState<AlignmentRun | null>(null);
   const [resultTab, setResultTab] = useState<"warnings" | "matching" | "latex" | "preview">(
@@ -300,6 +304,10 @@ export function AlignPage() {
   const [finalizing, setFinalizing] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    saveStoredLatex(latex);
+  }, [latex]);
 
   async function onAlign(e: FormEvent) {
     e.preventDefault();

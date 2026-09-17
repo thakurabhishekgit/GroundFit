@@ -6,43 +6,27 @@ import { useAuth } from "../lib/auth";
 const SCENES = [
   {
     id: "jd",
-    label: "1 · Job description",
-    title: "Backend Engineer — Java / Spring",
-    lines: [
-      "Must: Java, Spring Boot, Redis, SQL Server",
-      "Nice: Azure App Service, CI/CD",
-      "Kafka mentioned — check your context",
-    ],
+    label: "JD in",
+    eyebrow: "Paste job description",
+    title: "Backend Engineer",
   },
   {
     id: "context",
-    label: "2 · Your experience",
-    title: "Evidence from your work",
-    lines: [
-      "✓ Redis — Freshdesk ticket-ID cache",
-      "✓ Spring Boot — Ticket360 owned end-to-end",
-      "✓ Azure DevOps — App Service deploy",
-    ],
+    label: "Match",
+    eyebrow: "Your experience graph",
+    title: "Evidence first",
   },
   {
     id: "warn",
-    label: "3 · Honest gap check",
-    title: "Kafka not in your context",
-    lines: [
-      "Proposed keyword isn’t proven in your projects",
-      "[ Add anyway ]  [ Skip ]  [ Suggest Redis pub/sub ]",
-      "You decide — GroundFit won’t invent it",
-    ],
+    label: "Gap",
+    eyebrow: "Honest gap check",
+    title: "Kafka isn’t proven",
   },
   {
     id: "out",
-    label: "4 · Aligned resume",
-    title: "LaTeX kept · content sharpened",
-    lines: [
-      "Summary / Experience / Skills rewritten",
-      "Projects unchanged (your real work stays)",
-      "Ready to download · same template format",
-    ],
+    label: "Out",
+    eyebrow: "Aligned resume",
+    title: "Same LaTeX · sharper fit",
   },
 ] as const;
 
@@ -53,13 +37,15 @@ export function LandingPage() {
   const { user, loading, loginWithGoogleToken } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [scene, setScene] = useState(0);
+  const [paused, setPaused] = useState(false);
 
   useEffect(() => {
+    if (paused) return;
     const id = window.setInterval(() => {
       setScene((s) => (s + 1) % SCENES.length);
-    }, 3200);
+    }, 3800);
     return () => window.clearInterval(id);
-  }, []);
+  }, [paused]);
 
   if (!loading && user) return <Navigate to="/app" replace />;
 
@@ -114,9 +100,30 @@ export function LandingPage() {
           )}
         </div>
 
-        <div className="landing-stage" aria-hidden={false}>
+        <div
+          className="landing-stage"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+        >
           <div className="stage-glow" />
+
+          <div className={`stage-float stage-float-a scene-${active.id}`}>
+            <span className="chip ok">Redis · matched</span>
+          </div>
+          <div className={`stage-float stage-float-b scene-${active.id}`}>
+            <span className={`chip ${active.id === "warn" ? "warn" : "ok"}`}>
+              {active.id === "warn" ? "Kafka · warn" : "Spring · matched"}
+            </span>
+          </div>
+
           <div className="stage-panel">
+            <div className="stage-chrome">
+              <span className="stage-dot-win" />
+              <span className="stage-dot-win" />
+              <span className="stage-dot-win" />
+              <span className="stage-chrome-label">GroundFit · align</span>
+            </div>
+
             <div className="stage-tabs">
               {SCENES.map((s, i) => (
                 <button
@@ -131,48 +138,129 @@ export function LandingPage() {
             </div>
 
             <div key={active.id} className="stage-scene">
-              <p className="stage-eyebrow">Live scenario</p>
+              <p className="stage-eyebrow">{active.eyebrow}</p>
               <h2 className="stage-title">{active.title}</h2>
-              <ul className="stage-lines">
-                {active.lines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
+
+              {active.id === "jd" && (
+                <div className="mock-jd">
+                  <div className="mock-jd-bar">
+                    <span>job_description.txt</span>
+                    <span className="mock-pulse">analyzing…</span>
+                  </div>
+                  <div className="mock-jd-body">
+                    <p>
+                      We’re hiring a <mark>Backend Engineer</mark> with strong{" "}
+                      <mark>Java</mark> / <mark>Spring Boot</mark>.
+                    </p>
+                    <p>
+                      You’ll own APIs, caching with <mark>Redis</mark>, and data in{" "}
+                      <mark>SQL Server</mark>.
+                    </p>
+                    <p className="muted-line">
+                      Nice to have: Azure App Service, CI/CD, <mark className="warn-mark">Kafka</mark>
+                    </p>
+                  </div>
+                  <div className="mock-tags">
+                    <span>Java</span>
+                    <span>Spring Boot</span>
+                    <span>Redis</span>
+                    <span className="tag-warn">Kafka?</span>
+                  </div>
+                </div>
+              )}
+
+              {active.id === "context" && (
+                <div className="mock-evidence">
+                  <article className="evidence-card" style={{ animationDelay: "0ms" }}>
+                    <header>
+                      <strong>Redis</strong>
+                      <span className="pill-ok">proven</span>
+                    </header>
+                    <p>Freshdesk ticket-ID cache · reduced lookup latency</p>
+                  </article>
+                  <article className="evidence-card" style={{ animationDelay: "90ms" }}>
+                    <header>
+                      <strong>Spring Boot</strong>
+                      <span className="pill-ok">proven</span>
+                    </header>
+                    <p>Ticket360 owned end-to-end · APIs + deploy</p>
+                  </article>
+                  <article className="evidence-card" style={{ animationDelay: "180ms" }}>
+                    <header>
+                      <strong>Azure DevOps</strong>
+                      <span className="pill-ok">proven</span>
+                    </header>
+                    <p>App Service pipelines · CI/CD for releases</p>
+                  </article>
+                </div>
+              )}
 
               {active.id === "warn" && (
-                <div className="stage-warn">
-                  <strong>Kafka</strong>
-                  <span>not_in_context</span>
-                  <div className="stage-warn-actions">
-                    <span>Add anyway</span>
-                    <span className="on">Skip</span>
+                <div className="mock-warn">
+                  <div className="mock-warn-icon">!</div>
+                  <div className="mock-warn-body">
+                    <strong>Kafka</strong>
+                    <span className="code-tag">not_in_context</span>
+                    <p>
+                      This keyword isn’t backed by your projects. GroundFit won’t invent
+                      usage — you choose.
+                    </p>
+                    <div className="mock-warn-actions">
+                      <button type="button" className="ghost-btn">
+                        Add anyway
+                      </button>
+                      <button type="button" className="accent-btn">
+                        Skip
+                      </button>
+                      <button type="button" className="ghost-btn">
+                        Suggest Redis pub/sub
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
 
               {active.id === "out" && (
-                <div className="stage-resume">
-                  <div className="stage-resume-line wide" />
-                  <div className="stage-resume-line" />
-                  <div className="stage-resume-line mid" />
-                  <div className="stage-resume-block" />
-                  <div className="stage-resume-block short" />
+                <div className="mock-resume">
+                  <div className="mock-resume-paper">
+                    <div className="paper-name">Abhishek Thakur</div>
+                    <div className="paper-rule" />
+                    <div className="paper-section">SUMMARY</div>
+                    <div className="paper-line accent-line" />
+                    <div className="paper-line" />
+                    <div className="paper-line short" />
+                    <div className="paper-section">EXPERIENCE</div>
+                    <div className="paper-line" />
+                    <div className="paper-line mid" />
+                    <div className="paper-line" />
+                    <div className="paper-section">SKILLS</div>
+                    <div className="paper-skills">
+                      <span>Java</span>
+                      <span>Spring Boot</span>
+                      <span>Redis</span>
+                      <span>SQL Server</span>
+                    </div>
+                  </div>
+                  <ul className="mock-resume-notes">
+                    <li>Projects left untouched</li>
+                    <li>LaTeX template preserved</li>
+                    <li>Ready to download</li>
+                  </ul>
                 </div>
               )}
             </div>
 
             <div className="stage-progress">
               {SCENES.map((s, i) => (
-                <span key={s.id} className={`stage-dot${i === scene ? " active" : ""}`} />
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-label={`Show ${s.label}`}
+                  className={`stage-dot${i === scene ? " active" : ""}`}
+                  onClick={() => setScene(i)}
+                />
               ))}
             </div>
-          </div>
-
-          <div className="stage-float stage-float-a">
-            <span className="chip ok">Redis · matched</span>
-          </div>
-          <div className="stage-float stage-float-b">
-            <span className="chip warn">Kafka · warn</span>
           </div>
         </div>
       </section>
@@ -201,15 +289,24 @@ export function LandingPage() {
         <div className="landing-feature-row">
           <article className="feature-tile">
             <h3>Match from experience</h3>
-            <p>JD skills intersect your graph — Redis only if Freshdesk/Ticket360 proves it.</p>
+            <p>
+              JD skills intersect your graph — Redis only if Freshdesk/Ticket360 proves
+              it.
+            </p>
           </article>
           <article className="feature-tile">
             <h3>Keep your LaTeX</h3>
-            <p>Same template and project blocks. Only Summary, Experience, and Skills move.</p>
+            <p>
+              Same template and project blocks. Only Summary, Experience, and Skills
+              move.
+            </p>
           </article>
           <article className="feature-tile">
             <h3>Warn before inventing</h3>
-            <p>Missing Kafka? You get a clear choice — add, skip, or use something you actually used.</p>
+            <p>
+              Missing Kafka? You get a clear choice — add, skip, or use something you
+              actually used.
+            </p>
           </article>
         </div>
       </section>

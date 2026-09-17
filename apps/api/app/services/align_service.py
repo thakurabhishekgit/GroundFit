@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.resume import AlignRequest
 from app.services.latex_utils import (
     find_section,
+    insert_section_after,
     normalize_skill_name,
     replace_section_body,
     split_sections,
@@ -50,12 +51,15 @@ using ONLY the provided verified skills and evidence.
 Hard rules:
 - Return ONLY the section BODY as LaTeX (no \\documentclass, no \\section{...} at all).
 - Never output a new \\section command.
-- Never output \\resumeProject (projects are handled elsewhere).
+- Never output \\resumeProject (projects are handled elsewhere — never invent project entries).
 - Preserve formatting macros exactly (\\resumeSubheading, \\resumeItemListStart, \\href, tabular*, \\vspace, etc.).
-- Do NOT invent employers, metrics, tools, or ownership.
+- Do NOT invent employers, metrics, tools, products, or ownership.
 - Do NOT add skills missing from the verified list unless listed in allowed_overrides.
 - Prefer rephrasing existing bullets over fabricating new ones.
 - EXPERIENCE: Do NOT add/remove jobs. Only rephrase existing bullets. Keep the same number of \\resumeSubheading blocks.
+- EXPERIENCE: Internship products (e.g. Ticket360) stay as Experience bullets — never promote them into Projects.
+- EXPERIENCE: If the JD barely overlaps this job's bullets, lightly rephrase toward transferable matched skills (APIs, React, SQL, testing, Git, Docker, CI/CD) without inventing clinical/domain work you never did.
+- SKILLS: Reorder/regroup to surface matched JD skills you already have; do not invent categories of tools you lack.
 """.strip()
 
 
@@ -65,10 +69,17 @@ CONCEPT_COVERED_BY: dict[str, set[str]] = {
     "sla": {"rbac", "spring-boot", "java"},
     "event-driven-design": {"kafka", "microservices", "redis"},
     "event-driven": {"kafka", "microservices"},
-    "ci-cd": {"azure-devops", "azure", "docker", "github"},
+    "ci-cd": {"azure-devops", "azure", "docker", "github", "git"},
     "cicd": {"azure-devops", "azure", "docker"},
+    "cloud-ci": {"azure-devops", "azure", "aws", "ci-cd", "docker"},
     "cloud": {"azure", "aws", "gcp"},
     "aws": {"azure", "aws"},  # JD often says Azure or AWS
+    "rest": {"spring-boot", "java", "fastapi", "express.js", "microservices"},
+    "rest-api": {"spring-boot", "java", "fastapi", "express.js"},
+    "nosql": {"mongodb", "redis", "mongo"},
+    "no-sql": {"mongodb", "redis"},
+    "testing": {"jest", "junit", "pytest"},
+    "frontend": {"react", "html", "css", "javascript", "typescript"},
 }
 
 NOISE_TOKENS = {
@@ -132,7 +143,9 @@ SKILL_FAMILIES: dict[str, set[str]] = {
     "kafka": {"kafka", "apache-kafka"},
     "microservices": {"microservices", "micro-services", "microservice"},
     "rbac": {"rbac", "role-based-access-control", "role-based-access"},
-    "cicd": {"ci-cd", "cicd", "ci/cd"},
+    "cicd": {"ci-cd", "cicd", "ci/cd", "cloud-ci"},
+    "mongodb": {"mongodb", "mongo", "nosql", "no-sql"},
+    "rest": {"rest", "rest-api", "restful", "rest-apis"},
 }
 
 REWRITE_SECTIONS = ("summary", "experience", "skills")
@@ -339,31 +352,51 @@ async def finalize_alignment(
 
 def restore_protected_sections(original: str, rewritten: str) -> str:
     """
-    Force Projects / Education / Achievements bodies from the original resume.
+    Force Projects / Education / Achievements from the original resume.
 
-    Prevents the model from inventing/removing projects even if it dumps
-    extra \\section blocks into another section body.
+    Replaces body (and header) when present; re-inserts the section if the
+    model deleted it. Prevents inventing Ticket360-as-project, etc.
     """
     out = rewritten
-    for hint in PROTECTED_SECTION_HINTS:
-        orig = find_section(original, hint)
-        if orig is None:
+    restored: set[str] = set()
+
+    for orig in split_sections(original):
+        name_l = orig.name.lower()
+        if not any(h in name_l for h in PROTECTED_SECTION_HINTS):
             continue
-        try:
-            out = replace_section_body(out, hint, orig.body)
-        except ValueError:
-            # Section missing in rewritten doc — leave as-is
+        if name_l in restored:
             continue
-    # If model injected extra \\resumeProject into Experience, strip them
+        restored.add(name_l)
+
+        cur = find_section(out, orig.name)
+        if cur is None:
+            # Try loose hint (e.g. "project")
+            for h in PROTECTED_SECTION_HINTS:
+                if h in name_l:
+                    cur = find_section(out, h)
+                    if cur is not None:
+                        break
+
+        body = orig.body if orig.body.startswith("\n") else "\n" + orig.body
+        if not body.endswith("\n"):
+            body += "\n"
+
+        if cur is not None:
+            out = out[: cur.start] + orig.header + body + out[cur.end :]
+        else:
+            after = "experience" if find_section(out, "experience") else "education"
+            out = insert_section_after(out, after, orig.header, orig.body)
+
     exp = find_section(out, "experience")
     if exp and "\\resumeProject" in exp.body:
         cleaned = re.sub(
-            r"\\resumeProject\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*\{(?:[^{}]|\{[^{}]*\})*\}",
+            r"\\resumeProject\b[\s\S]*?(?=\\resumeProject\b|\\resumeItemListStart|\\resumeSubHeadingListEnd|\\resumeSubheading\b|$)",
             "",
             exp.body,
             flags=re.IGNORECASE,
         )
         out = replace_section_body(out, "experience", cleaned)
+
     return out
 
 

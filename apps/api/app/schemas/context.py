@@ -107,10 +107,14 @@ class ExtractPreviewOut(BaseModel):
 
 
 class ConfirmGraphRequest(BaseModel):
-    """User-accepted skill graph after review UI."""
+    """User-accepted skill graph after review UI.
+
+    Default is merge: keep previously saved skills, upsert overlaps, append
+    new evidence. Set replace_existing=True to wipe skills not in this payload.
+    """
 
     skills: list[SkillIn]
-    replace_existing: bool = True
+    replace_existing: bool = False
 
 
 class ContextBundleOut(BaseModel):

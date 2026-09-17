@@ -45,6 +45,39 @@ VITE_GOOGLE_CLIENT_ID=...
 - For 10–15 friends who use it occasionally, cold starts are acceptable
 - Put `OPENAI_API_KEY`, `DATABASE_URL`, `GOOGLE_CLIENT_ID` in Render secrets
 
+### Step-by-step (manual Web Service)
+
+1. Push latest `apps/api` to GitHub (`thakurabhishekgit/GroundFit`).
+2. [render.com](https://render.com) → **New → Web Service** → connect the repo.
+3. Settings:
+   - **Name:** `groundfit-api`
+   - **Root Directory:** `apps/api`
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Health Check Path:** `/health`
+4. **Environment** (Environment tab):
+
+| Key | Value |
+|-----|--------|
+| `DATABASE_URL` | Neon connection string (`postgresql://…?sslmode=require`) — API normalizes to asyncpg |
+| `OPENAI_API_KEY` | your OpenAI key |
+| `OPENAI_CHAT_MODEL` | e.g. `gpt-4o-mini` or your luna model |
+| `GOOGLE_CLIENT_ID` | same Web client ID as frontend |
+| `GOOGLE_CLIENT_SECRET` | from Google Cloud (optional for GIS token verify) |
+| `JWT_SECRET` | long random string |
+| `CORS_ORIGINS` | `https://YOUR-APP.vercel.app,http://localhost:2000` |
+| `FRONTEND_URL` | `https://YOUR-APP.vercel.app` |
+| `PYTHON_VERSION` | `3.12.8` (optional but recommended) |
+
+5. **Create Web Service** → wait for deploy → open `https://groundfit-api.onrender.com/health` (should return OK).
+6. Wire frontend: Vercel env `VITE_API_URL=https://groundfit-api.onrender.com` → Redeploy web.
+7. Google Cloud → OAuth client → Authorized JavaScript origins: add Vercel URL (keep localhost).
+
+### Or Blueprint
+
+Repo includes `render.yaml`. Render → **New → Blueprint** → select repo → fill the `sync: false` secrets when prompted.
+
 **Deploy:** Web Service → Docker or native Python → `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 Health check: `GET /health`
@@ -82,6 +115,40 @@ If cold starts annoy: upgrade Render paid, or move API to Fly.io / always-on che
 | Hosting (Vercel + Render + Neon) | **$0** |
 | OpenAI | **$1–20/month** depending on align frequency & model (use `gpt-4o-mini` for extract/verify; stronger model only for rewrite if needed) |
 | Domain | $0–12/year optional |
+
+---
+
+## GitHub Actions → Vercel (frontend)
+
+Workflow: `.github/workflows/deploy-web-vercel.yml` deploys `apps/web` on push to `main`.
+
+1. Create a Vercel project linked to this repo, **Root Directory** = `apps/web`
+2. In Vercel project settings, set env: `VITE_API_URL`, `VITE_GOOGLE_CLIENT_ID`
+3. Copy from Vercel → Project Settings → General:
+   - Org ID → GitHub secret `VERCEL_ORG_ID`
+   - Project ID → GitHub secret `VERCEL_PROJECT_ID_WEB`
+4. Create a Vercel token → GitHub secret `VERCEL_TOKEN`
+5. Push to `main` (or run workflow manually)
+
+---
+
+## Can both frontend and backend live on Vercel?
+
+| Piece | On Vercel? | Notes |
+|-------|------------|--------|
+| **Frontend** (`apps/web`) | **Yes — recommended** | Vite SPA; same or separate Vercel project |
+| **API** (`apps/api` FastAPI) | **Possible, not ideal** | Runs as serverless; Hobby ~10s / Pro ~60s request limits. Align does several OpenAI calls and often needs longer. Cold starts + no always-on worker. |
+| **Postgres** | **No** | Keep **Neon** (you already have a URL) |
+
+**Recommended (what we document):**
+
+```
+Vercel (web)  →  Render / Railway / Fly (FastAPI)  →  Neon
+```
+
+**Two Vercel projects** is fine for web + a thin API only if you accept timeout risk, or split align into async jobs (more work).
+
+**Same Vercel project for both:** possible with monorepo + serverless Python under `/api`, but fighting the platform for this FastAPI + long LLM align flow — skip for now.
 
 ---
 

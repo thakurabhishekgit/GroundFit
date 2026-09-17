@@ -27,10 +27,34 @@ class LatexSection:
     body: str
 
 
-_SECTION_RE = re.compile(
-    r"(?P<header>\\section\*?\{(?P<name>[^}]+)\})",
-    re.IGNORECASE,
-)
+# Match \section{...} / \section*{...} with nested braces (e.g. \section{\textbf{Projects}})
+_SECTION_START_RE = re.compile(r"\\section\*?\{", re.IGNORECASE)
+
+
+def _closing_brace_index(text: str, open_brace_at: int) -> int:
+    """Index of the `}` that closes the `{` at open_brace_at, respecting nesting."""
+    depth = 0
+    i = open_brace_at
+    while i < len(text):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        elif ch == "\\" and i + 1 < len(text):
+            # Skip escaped char so \{ \} don't confuse depth (rare in section titles)
+            i += 1
+        i += 1
+    raise ValueError("Unbalanced braces in \\section header")
+
+
+def _plain_section_name(raw: str) -> str:
+    """Strip LaTeX commands from a section title for matching."""
+    plain = re.sub(r"\\[a-zA-Z]+\*?", "", raw)
+    plain = re.sub(r"[{}]", "", plain)
+    return plain.strip()
 
 
 def split_sections(latex: str) -> list[LatexSection]:
@@ -40,22 +64,28 @@ def split_sections(latex: str) -> list[LatexSection]:
     Content before the first section is treated as preamble (not returned).
     Each section body runs until the next section header or end of doc.
     """
-    matches = list(_SECTION_RE.finditer(latex))
+    starts = list(_SECTION_START_RE.finditer(latex))
     sections: list[LatexSection] = []
-    for i, match in enumerate(matches):
-        start = match.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(latex)
-        header = match.group("header")
-        name = match.group("name").strip()
-        body = latex[match.end() : end]
+    for i, match in enumerate(starts):
+        open_brace = match.end() - 1  # points at '{'
+        try:
+            close = _closing_brace_index(latex, open_brace)
+        except ValueError:
+            continue
+        header = latex[match.start() : close + 1]
+        raw_name = latex[open_brace + 1 : close]
+        name = _plain_section_name(raw_name) or raw_name.strip()
+        body_start = close + 1
+        end = starts[i + 1].start() if i + 1 < len(starts) else len(latex)
+        body = latex[body_start:end]
         sections.append(
-            LatexSection(name=name, start=start, end=end, header=header, body=body)
+            LatexSection(name=name, start=match.start(), end=end, header=header, body=body)
         )
     return sections
 
 
 def find_section(latex: str, wanted: str) -> Optional[LatexSection]:
-    """Find first section whose name contains `wanted` (case-insensitive)."""
+    """Find first section whose plain name contains `wanted` (case-insensitive)."""
     needle = wanted.lower().strip()
     for section in split_sections(latex):
         if needle in section.name.lower():
@@ -84,6 +114,23 @@ def replace_section_body(latex: str, wanted: str, new_body: str) -> str:
     return latex[: section.start] + section.header + body + latex[section.end :]
 
 
+def insert_section_after(latex: str, after_hint: str, header: str, body: str) -> str:
+    """Insert a full section (header+body) after the section matching after_hint."""
+    anchor = find_section(latex, after_hint)
+    if anchor is None:
+        # Append before \\end{document} if present
+        end_doc = re.search(r"\\end\{document\}", latex, re.IGNORECASE)
+        chunk = header + (body if body.startswith("\n") else "\n" + body)
+        if end_doc:
+            return latex[: end_doc.start()] + chunk + "\n" + latex[end_doc.start() :]
+        return latex + "\n" + chunk
+
+    chunk = header + (body if body.startswith("\n") else "\n" + body)
+    if not chunk.endswith("\n"):
+        chunk += "\n"
+    return latex[: anchor.end] + chunk + latex[anchor.end :]
+
+
 def normalize_skill_name(raw: str) -> str:
     """Canonical lowercase slug for skill matching."""
     aliases = {
@@ -102,6 +149,10 @@ def normalize_skill_name(raw: str) -> str:
         "restful-apis": "rest",
         "reactjs": "react",
         "react.js": "react",
+        "jest": "jest",
+        "vue": "vue",
+        "nuxt": "nuxt",
+        "svelte": "svelte",
     }
     slug = re.sub(r"[^a-z0-9.+#]+", "-", raw.strip().lower()).strip("-")
     return aliases.get(slug, slug)

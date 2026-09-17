@@ -46,7 +46,7 @@ export function latexToPreviewHtml(latex: string): string {
     )}</a>`;
   });
 
-  // resumeSubheading {company}{loc}{title}{dates}  — 4 braced args
+  // resumeSubheading {role}{loc}{company}{dates}
   text = text.replace(
     /\\resumeSubheading\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}/gi,
     (_m, a, b, c, d) =>
@@ -57,9 +57,9 @@ export function latexToPreviewHtml(latex: string): string {
       )}</span></div></div>\n`
   );
 
-  // resumeProject {name}{stack}{date}{links-ish}
+  // resumeProject {name}{stack}{date}{...nested links...}
   text = text.replace(
-    /\\resumeProject\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{[\s\S]*?\}/gi,
+    /\\resumeProject\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*\{[\s\S]*?\n\}/gi,
     (_m, name, stack, date) =>
       `\n<div class="pv-job"><div class="pv-job-row"><strong>${escapeHtml(
         name
@@ -68,11 +68,8 @@ export function latexToPreviewHtml(latex: string): string {
       )}</div></div>\n`
   );
 
-  text = text.replace(
-    /\\section\*?\{([^}]+)\}/gi,
-    (_m, name) =>
-      `\n<h2 class="pv-section">${escapeHtml(stripNested(name))}</h2>\n`
-  );
+  // \section{\textbf{Projects}} — nested braces
+  text = replaceSections(text);
 
   text = text.replace(/\\textbf\{([^{}]*)\}/gi, (_m, inner) => `<strong>${escapeHtml(inner)}</strong>`);
   text = text.replace(/\\textit\{([^{}]*)\}/gi, (_m, inner) => `<em>${escapeHtml(inner)}</em>`);
@@ -82,7 +79,6 @@ export function latexToPreviewHtml(latex: string): string {
 
   text = text.replace(/\\item\b/gi, "\n• ");
 
-  // Drop list / env scaffolding (full command names)
   text = text.replace(
     /\\(?:resumeSubHeadingListStart|resumeSubHeadingListEnd|resumeItemListStart|resumeItemListEnd|resumeHeadingSkillStart|resumeHeadingSkillEnd)\b/gi,
     "\n"
@@ -124,6 +120,44 @@ export function latexToPreviewHtml(latex: string): string {
   flushList();
 
   return `<div class="pv-paper">${htmlParts.join("\n")}</div>`;
+}
+
+function replaceSections(text: string): string {
+  const re = /\\section\*?\{/gi;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out += text.slice(last, m.index);
+    const open = m.index + m[0].length - 1;
+    const close = closingBraceIndex(text, open);
+    if (close < 0) {
+      out += m[0];
+      last = m.index + m[0].length;
+      continue;
+    }
+    const rawName = text.slice(open + 1, close);
+    out += `\n<h2 class="pv-section">${escapeHtml(stripNested(rawName))}</h2>\n`;
+    last = close + 1;
+    re.lastIndex = last;
+  }
+  out += text.slice(last);
+  return out;
+}
+
+function closingBraceIndex(text: string, openAt: number): number {
+  let depth = 0;
+  for (let i = openAt; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    } else if (ch === "\\" && i + 1 < text.length) {
+      i += 1;
+    }
+  }
+  return -1;
 }
 
 function stripNested(s: string): string {
