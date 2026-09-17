@@ -195,7 +195,7 @@ export function ContextPage() {
               id="raw"
               value={rawText}
               onChange={(e) => setRawText(e.target.value)}
-              placeholder="e.g. At Newmark Freshdesk agent I used Redis to cache processed ticket IDs…"
+              placeholder="Paste your experience narrative: roles, projects, and where/why you used each technology…"
               required
             />
           </div>
@@ -446,6 +446,7 @@ export function AlignPage() {
               id="latex"
               value={latex}
               onChange={(e) => setLatex(e.target.value)}
+              placeholder="Paste your own LaTeX resume source here…"
               required
             />
           </div>

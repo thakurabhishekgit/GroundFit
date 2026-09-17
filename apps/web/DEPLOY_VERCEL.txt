@@ -1,0 +1,17 @@
+# One-shot production deploy for GroundFit web → Vercel
+# Run from repo root in your own terminal (needs browser login once):
+#
+#   cd apps/web
+#   npx vercel login
+#   npx vercel --prod --yes
+#
+# First run may ask to link/create a project — choose:
+#   - Link to existing OR create new "groundfit"
+#   - Root should already be apps/web if you run from here
+#   - Override settings? No (uses vercel.json)
+
+# After deploy, copy the URL and set on Render:
+#   CORS_ORIGINS=https://YOUR-APP.vercel.app,http://localhost:2000
+#   FRONTEND_URL=https://YOUR-APP.vercel.app
+#
+# Google Cloud OAuth → Authorized JavaScript origins → add the Vercel URL
