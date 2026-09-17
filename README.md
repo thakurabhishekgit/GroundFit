@@ -82,11 +82,21 @@ groundfit/
 
 ---
 
-## Next build step
+## Run locally
 
-1. Scaffold `apps/web` + `apps/api`
-2. Google login + Neon schema
-3. Context onboarding → extract/review → skill graph
-4. Align pipeline: JD → match → rewrite Experience/Skills → verify
+See [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md).
+
+- API: `http://localhost:7000/docs`
+- Web: `http://localhost:2000`
+
+```bash
+# API
+cd apps/api && python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 7000
+
+# Web (other terminal)
+cd apps/web && npm install && npm run dev
+```
 
 Do **not** start with a fancy RAG stack — structured context + verification is the product moat.
