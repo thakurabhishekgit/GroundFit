@@ -7,6 +7,7 @@ All secrets stay in env — never hardcode API keys here.
 from functools import lru_cache
 from pathlib import Path
 from typing import List
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -62,17 +63,40 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_database_url(cls, value: str) -> str:
         """
-        Accept both `postgresql://` and SQLAlchemy async URLs.
+        Normalize Neon/libpq URLs for SQLAlchemy asyncpg.
 
-        Drivers: async engine needs `postgresql+asyncpg://`.
+        - postgresql:// → postgresql+asyncpg://
+        - Drop libpq-only params (sslmode, channel_binding) that crash asyncpg
+        - Map SSL to asyncpg's `ssl=require` query flag
         """
         if not value:
             return value
-        if value.startswith("postgresql://"):
-            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
-        if value.startswith("postgres://"):
-            return value.replace("postgres://", "postgresql+asyncpg://", 1)
-        return value
+
+        url = value.strip()
+        if url.startswith("postgresql://"):
+            url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+        elif url.startswith("postgres://"):
+            url = "postgresql+asyncpg://" + url[len("postgres://") :]
+
+        parsed = urlparse(url)
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+        sslmode = (params.pop("sslmode", "") or "").lower()
+        params.pop("channel_binding", None)
+
+        # Neon / managed Postgres almost always need TLS
+        host = (parsed.hostname or "").lower()
+        needs_ssl = (
+            sslmode in {"require", "verify-ca", "verify-full", "prefer"}
+            or "neon.tech" in host
+            or params.get("ssl", "").lower() in {"1", "true", "require"}
+        )
+        if needs_ssl:
+            params["ssl"] = "require"
+        else:
+            params.pop("ssl", None)
+
+        return urlunparse(parsed._replace(query=urlencode(params)))
 
     @property
     def cors_origin_list(self) -> List[str]:
