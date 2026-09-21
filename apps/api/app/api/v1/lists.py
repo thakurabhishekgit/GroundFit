@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.deps import CurrentUser, DbSession
 from app.models.job_link import JobLink
 from app.schemas.job_link import JobLinkCreate, JobLinkOut, JobLinkUpdate
-from app.services.reminder_service import dispatch_due_reminders
+from app.services.reminder_service import dispatch_due_reminders, maybe_send_reminder_for_link
 
 
 router = APIRouter(prefix="/lists", tags=["lists"])
@@ -52,6 +52,11 @@ async def create_job_link(
     db.add(link)
     await db.commit()
     await db.refresh(link)
+    # Short deadlines: don't wait for the poll — send now if already in window
+    # Applied links never get expiry reminders
+    if not link.applied:
+        await maybe_send_reminder_for_link(db, link.id)
+        await db.refresh(link)
     return JobLinkOut.model_validate(link)
 
 
@@ -66,11 +71,20 @@ async def update_job_link(
     data = payload.model_dump(exclude_unset=True)
     clear_expires = data.pop("clear_expires_at", False)
 
+    was_applied = link.applied
+    old_expires = link.expires_at
+
     expiry_changed = False
     if "expires_at" in data:
-        if data["expires_at"] != link.expires_at:
-            expiry_changed = True
-        link.expires_at = data["expires_at"]
+        new_exp = data["expires_at"]
+        # Treat timezone-naive/aware same instant as unchanged
+        if new_exp is None or old_expires is None:
+            expiry_changed = new_exp != old_expires
+        else:
+            a = new_exp if new_exp.tzinfo else new_exp.replace(tzinfo=timezone.utc)
+            b = old_expires if old_expires.tzinfo else old_expires.replace(tzinfo=timezone.utc)
+            expiry_changed = a != b
+        link.expires_at = new_exp
     if clear_expires:
         link.expires_at = None
         expiry_changed = True
@@ -79,15 +93,23 @@ async def update_job_link(
         if field in data:
             setattr(link, field, data[field])
 
-    # New deadline → allow a fresh reminder; applied → no reminder needed
+    # Reminder rules:
+    # - Applied → never email (mark as handled)
+    # - Deadline edited → reset so the NEW date/time can get a reminder
+    # - Unmarked applied → allow reminder again for current deadline
     if link.applied:
         link.reminder_sent_at = datetime.now(timezone.utc)
-    elif expiry_changed:
+    elif expiry_changed or (was_applied and not link.applied):
         link.reminder_sent_at = None
 
     link.updated_by_id = user.id
     await db.commit()
     await db.refresh(link)
+
+    # Only send when still open (not applied)
+    if not link.applied:
+        await maybe_send_reminder_for_link(db, link.id)
+        await db.refresh(link)
     return JobLinkOut.model_validate(link)
 
 

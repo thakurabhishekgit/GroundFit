@@ -1,5 +1,6 @@
 """
-Job-link expiry reminders: email ~12h before expires_at when not applied.
+Job-link expiry reminders: email when deadline is within REMINDER_HOURS_BEFORE
+and the job is not marked applied.
 """
 
 from __future__ import annotations
@@ -7,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,102 @@ from app.models.job_link import JobLink
 from app.services.email_service import _ensure_email_file_logger, send_job_expiry_reminder
 
 logger = logging.getLogger("groundfit.email")
+
+
+def _aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _in_reminder_window(expires_at: datetime, now: datetime, hours_before: int) -> bool:
+    exp = _aware(expires_at)
+    window_end = now + timedelta(hours=hours_before)
+    return now < exp <= window_end
+
+
+async def _send_one(db: AsyncSession, link: JobLink, now: datetime) -> bool:
+    user = link.user
+    if user is None or not user.email:
+        result = await db.execute(
+            select(JobLink)
+            .options(selectinload(JobLink.user))
+            .where(JobLink.id == link.id)
+        )
+        link = result.scalar_one()
+        user = link.user
+    if user is None or not user.email:
+        logger.warning("[REMINDER-SKIP] link=%s missing user email", link.id)
+        return False
+
+    expires_iso = link.expires_at.isoformat() if link.expires_at else ""
+    ok = await send_job_expiry_reminder(
+        to=user.email,
+        name=user.name,
+        subject_line=link.subject,
+        url=link.url,
+        about=link.about,
+        expires_at_iso=expires_iso,
+    )
+    if ok:
+        link.reminder_sent_at = now
+        link.updated_by_id = user.id
+        logger.info(
+            "[REMINDER-OK] link=%s to=%s subject=%r",
+            link.id,
+            user.email,
+            link.subject,
+        )
+        return True
+    logger.warning(
+        "[REMINDER-FAIL] link=%s to=%s — left reminder_sent_at null for retry",
+        link.id,
+        user.email,
+    )
+    return False
+
+
+async def maybe_send_reminder_for_link(db: AsyncSession, link_id: UUID) -> bool:
+    """
+    Immediately email if this link is in the reminder window (used on create/update).
+    Avoids missing short deadlines while waiting for the poll.
+    """
+    _ensure_email_file_logger()
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(JobLink)
+        .options(selectinload(JobLink.user))
+        .where(JobLink.id == link_id, JobLink.is_deleted.is_(False))
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        return False
+    if link.applied or link.expires_at is None or link.reminder_sent_at is not None:
+        logger.info(
+            "[REMINDER-IMMEDIATE] skip id=%s applied=%s expires=%s sent=%s",
+            link.id,
+            link.applied,
+            link.expires_at,
+            link.reminder_sent_at,
+        )
+        return False
+    if not _in_reminder_window(link.expires_at, now, settings.reminder_hours_before):
+        hours_left = (_aware(link.expires_at) - now).total_seconds() / 3600
+        logger.info(
+            "[REMINDER-IMMEDIATE] not in window id=%s hours_left=%.2f",
+            link.id,
+            hours_left,
+        )
+        return False
+
+    logger.info("[REMINDER-IMMEDIATE] sending id=%s subject=%r", link.id, link.subject)
+    ok = await _send_one(db, link, now)
+    if ok:
+        await db.commit()
+        await db.refresh(link)
+    return ok
 
 
 async def dispatch_due_reminders(db: AsyncSession) -> int:
@@ -32,7 +130,6 @@ async def dispatch_due_reminders(db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(hours=settings.reminder_hours_before)
 
-    # Diagnostic: all open (not applied) links with a deadline
     diag = await db.execute(
         select(JobLink)
         .options(selectinload(JobLink.user))
@@ -44,10 +141,7 @@ async def dispatch_due_reminders(db: AsyncSession) -> int:
     )
     open_links = list(diag.scalars().unique().all())
     for link in open_links:
-        exp = link.expires_at
-        assert exp is not None
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
+        exp = _aware(link.expires_at)  # type: ignore[arg-type]
         hours_left = (exp - now).total_seconds() / 3600
         reasons: list[str] = []
         if link.reminder_sent_at is not None:
@@ -91,35 +185,8 @@ async def dispatch_due_reminders(db: AsyncSession) -> int:
 
     sent = 0
     for link in links:
-        user = link.user
-        if user is None or not user.email:
-            logger.warning("[REMINDER-SKIP] link=%s missing user email", link.id)
-            continue
-        expires_iso = link.expires_at.isoformat() if link.expires_at else ""
-        ok = await send_job_expiry_reminder(
-            to=user.email,
-            name=user.name,
-            subject_line=link.subject,
-            url=link.url,
-            about=link.about,
-            expires_at_iso=expires_iso,
-        )
-        if ok:
-            link.reminder_sent_at = now
-            link.updated_by_id = user.id
+        if await _send_one(db, link, now):
             sent += 1
-            logger.info(
-                "[REMINDER-OK] link=%s to=%s subject=%r",
-                link.id,
-                user.email,
-                link.subject,
-            )
-        else:
-            logger.warning(
-                "[REMINDER-FAIL] link=%s to=%s — left reminder_sent_at null for retry",
-                link.id,
-                user.email,
-            )
 
     if links:
         await db.commit()
@@ -130,7 +197,7 @@ async def reminder_poll_loop(stop_event: asyncio.Event) -> None:
     """Background loop started from app lifespan."""
     _ensure_email_file_logger()
     settings = get_settings()
-    interval = max(60, settings.reminder_poll_seconds)
+    interval = max(30, settings.reminder_poll_seconds)
     logger.info(
         "[REMINDER-LOOP] started every %ss email_enabled=%s hours_before=%s",
         interval,

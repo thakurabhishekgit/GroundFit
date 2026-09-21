@@ -225,8 +225,8 @@ export function ListsPage() {
         <section className="card lists-form-card">
           <h2 className="panel-title">{editingId ? "Edit link" : "Add to Lists"}</h2>
           <p className="panel-sub muted">
-            Bookmark job posts with a deadline. If not marked Applied, you get an email ~12 hours
-            before expiry (when SMTP is enabled).
+            Bookmark jobs with a deadline. Applied = no expiry email. Change the deadline and the
+            reminder reschedules to the new date/time.
           </p>
           <form onSubmit={onSubmit}>
             <div className="field">
@@ -309,8 +309,11 @@ export function ListsPage() {
               </div>
               <p className="lists-deadline-hint muted">
                 {expiryPreview
-                  ? `Reminder ~12h before · ${expiryPreview}`
+                  ? `Open jobs: reminder when within 12h of · ${expiryPreview}`
                   : "Optional — leave empty if there’s no closing date"}
+              </p>
+              <p className="lists-deadline-hint muted">
+                Mark Applied to stop emails. Edit deadline → reminder resets to the new time.
               </p>
             </div>
             <label className="lists-check">
