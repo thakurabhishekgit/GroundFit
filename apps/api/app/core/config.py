@@ -60,11 +60,16 @@ class Settings(BaseSettings):
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
 
     # --- Email ---
-    # Render free blocks SMTP (25/465/587). Use Resend (HTTPS) in production.
+    # Render free blocks SMTP. Prefer gmail (HTTPS API) or resend.
     email_enabled: bool = Field(default=False, alias="EMAIL_ENABLED")
-    email_provider: str = Field(default="auto", alias="EMAIL_PROVIDER")  # auto|resend|smtp
+    email_provider: str = Field(default="auto", alias="EMAIL_PROVIDER")  # auto|gmail|resend|smtp
+    # Gmail API (HTTPS) — send as groundfit.in@gmail.com on Render free
+    gmail_refresh_token: str = Field(default="", alias="GMAIL_REFRESH_TOKEN")
+    gmail_oauth_client_id: str = Field(default="", alias="GMAIL_OAUTH_CLIENT_ID")
+    gmail_oauth_client_secret: str = Field(default="", alias="GMAIL_OAUTH_CLIENT_SECRET")
+    gmail_sender: str = Field(default="", alias="GMAIL_SENDER")  # groundfit.in@gmail.com
     resend_api_key: str = Field(default="", alias="RESEND_API_KEY")
-    resend_from: str = Field(default="", alias="RESEND_FROM")  # e.g. GroundFit <onboarding@resend.dev>
+    resend_from: str = Field(default="", alias="RESEND_FROM")
     smtp_host: str = Field(default="", alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
     smtp_user: str = Field(default="", alias="SMTP_USER")

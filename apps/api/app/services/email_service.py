@@ -1,16 +1,16 @@
 """
 Transactional email.
 
-Providers:
-  - resend  → HTTPS API (works on Render free; SMTP ports are blocked there)
-  - smtp    → classic SMTP (local / paid hosts)
-
-Set EMAIL_PROVIDER=resend + RESEND_API_KEY for production on Render free.
+Providers (pick via EMAIL_PROVIDER or auto):
+  - gmail  → Gmail API over HTTPS (Render-free safe; From = your Gmail)
+  - resend → Resend HTTPS API
+  - smtp   → classic SMTP (local / paid hosts only; blocked on Render free)
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import smtplib
 from datetime import datetime, timezone
@@ -27,6 +27,7 @@ logger = logging.getLogger("groundfit.email")
 
 _LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 _email_file_ready = False
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
 
 def _ensure_email_file_logger() -> None:
@@ -51,10 +52,14 @@ def _ensure_email_file_logger() -> None:
             for h in logger.handlers
         ):
             logger.addHandler(handler)
-        # Always also log to stderr (Render captures this)
-        if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler) for h in logger.handlers):
+        if not any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+            for h in logger.handlers
+        ):
             sh = logging.StreamHandler()
-            sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [email] %(message)s"))
+            sh.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s [email] %(message)s")
+            )
             sh.setLevel(logging.INFO)
             logger.addHandler(sh)
         logger.setLevel(logging.INFO)
@@ -67,19 +72,47 @@ def _ensure_email_file_logger() -> None:
 def _log(msg: str, *args: Any, level: int = logging.INFO) -> None:
     _ensure_email_file_logger()
     logger.log(level, msg, *args)
-    # Belt-and-suspenders for Render dashboards that only show print-ish stdout
     try:
         print(("[email] " + msg) % args if args else "[email] " + msg, flush=True)
     except Exception:  # noqa: BLE001
         pass
 
 
+def _gmail_client_id() -> str:
+    s = get_settings()
+    return (s.gmail_oauth_client_id or s.google_client_id or "").strip()
+
+
+def _gmail_client_secret() -> str:
+    s = get_settings()
+    return (s.gmail_oauth_client_secret or s.google_client_secret or "").strip()
+
+
+def _gmail_sender_address() -> str:
+    s = get_settings()
+    raw = (s.gmail_sender or s.smtp_user or s.smtp_from or "").strip()
+    # "GroundFit <a@b.com>" → a@b.com
+    if "<" in raw and ">" in raw:
+        return raw.split("<", 1)[1].split(">", 1)[0].strip()
+    return raw
+
+
+def _display_from() -> str:
+    s = get_settings()
+    if s.smtp_from and "@" in s.smtp_from:
+        return s.smtp_from.strip()
+    sender = _gmail_sender_address()
+    return f"GroundFit <{sender}>" if sender else ""
+
+
 def email_provider() -> str:
     settings = get_settings()
     raw = (settings.email_provider or "auto").strip().lower()
-    if raw in {"resend", "smtp"}:
+    if raw in {"gmail", "resend", "smtp"}:
         return raw
-    # auto: prefer Resend when key present (Render-safe)
+    # auto priority: gmail → resend → smtp
+    if settings.gmail_refresh_token and _gmail_client_id() and _gmail_client_secret():
+        return "gmail"
     if settings.resend_api_key:
         return "resend"
     return "smtp"
@@ -90,8 +123,15 @@ def email_configured() -> bool:
     if not settings.email_enabled:
         return False
     provider = email_provider()
+    if provider == "gmail":
+        return bool(
+            settings.gmail_refresh_token
+            and _gmail_client_id()
+            and _gmail_client_secret()
+            and _gmail_sender_address()
+        )
     if provider == "resend":
-        return bool(settings.resend_api_key and (settings.smtp_from or settings.resend_from))
+        return bool(settings.resend_api_key and (settings.resend_from or settings.smtp_from))
     return bool(
         settings.smtp_host
         and settings.smtp_from
@@ -101,32 +141,126 @@ def email_configured() -> bool:
 
 
 def email_status() -> dict[str, Any]:
-    """Safe diagnostics (no secrets)."""
     settings = get_settings()
     provider = email_provider()
+    notes = {
+        "gmail": "Gmail API over HTTPS — From is your Gmail; works on Render free",
+        "resend": "Resend HTTPS — needs verified domain for arbitrary recipients",
+        "smtp": "SMTP — blocked on Render free (ports 25/465/587)",
+    }
     return {
         "email_enabled": settings.email_enabled,
         "provider": provider,
         "configured": email_configured(),
-        "from": settings.resend_from or settings.smtp_from or None,
-        "smtp_host": settings.smtp_host or None,
+        "from": _display_from() or settings.resend_from or settings.smtp_from or None,
+        "gmail_sender": _gmail_sender_address() or None,
+        "gmail_refresh_token_set": bool(settings.gmail_refresh_token),
         "resend_key_set": bool(settings.resend_api_key),
-        "note": (
-            "Render free blocks SMTP ports 25/465/587 — use EMAIL_PROVIDER=resend + RESEND_API_KEY"
-            if provider == "smtp"
-            else "Resend uses HTTPS (works on Render free)"
-        ),
+        "smtp_host": settings.smtp_host or None,
+        "note": notes.get(provider, ""),
     }
 
 
-def _from_address() -> str:
-    settings = get_settings()
-    return (settings.resend_from or settings.smtp_from or "").strip()
+def _build_raw_message(
+    *,
+    sender: str,
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: Optional[str],
+) -> str:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to
+    msg.set_content(text_body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
 
 
-def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: Optional[str]) -> bool:
+def _gmail_access_token() -> Optional[str]:
     settings = get_settings()
-    from_addr = _from_address()
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": _gmail_client_id(),
+                    "client_secret": _gmail_client_secret(),
+                    "refresh_token": settings.gmail_refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+        if res.status_code >= 400:
+            _log(
+                "[FAIL] gmail token refresh status=%s body=%s",
+                res.status_code,
+                res.text[:400],
+                level=logging.ERROR,
+            )
+            return None
+        token = res.json().get("access_token")
+        if not token:
+            _log("[FAIL] gmail token response missing access_token", level=logging.ERROR)
+            return None
+        return token
+    except Exception as exc:  # noqa: BLE001
+        _log("[FAIL] gmail token refresh error=%s", exc, level=logging.ERROR)
+        return None
+
+
+def _send_via_gmail(
+    *, to: str, subject: str, text_body: str, html_body: Optional[str]
+) -> bool:
+    sender_display = _display_from()
+    sender_email = _gmail_sender_address()
+    _log(
+        "[TRY] provider=gmail to=%s subject=%r from=%s",
+        to,
+        subject,
+        sender_display,
+    )
+    access = _gmail_access_token()
+    if not access:
+        return False
+    raw = _build_raw_message(
+        sender=sender_display or sender_email,
+        to=to,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            res = client.post(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                headers={
+                    "Authorization": f"Bearer {access}",
+                    "Content-Type": "application/json",
+                },
+                json={"raw": raw},
+            )
+        if res.status_code >= 400:
+            _log(
+                "[FAIL] gmail send status=%s body=%s",
+                res.status_code,
+                res.text[:500],
+                level=logging.ERROR,
+            )
+            return False
+        _log("[OK] gmail to=%s id=%s", to, res.json().get("id"))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log("[FAIL] gmail send error=%s", exc, level=logging.ERROR)
+        return False
+
+
+def _send_via_resend(
+    *, to: str, subject: str, text_body: str, html_body: Optional[str]
+) -> bool:
+    settings = get_settings()
+    from_addr = (settings.resend_from or settings.smtp_from or "").strip()
     payload: dict[str, Any] = {
         "from": from_addr,
         "to": [to],
@@ -162,7 +296,9 @@ def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: Option
         return False
 
 
-def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: Optional[str]) -> bool:
+def _send_via_smtp(
+    *, to: str, subject: str, text_body: str, html_body: Optional[str]
+) -> bool:
     settings = get_settings()
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -195,20 +331,28 @@ def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: Optional
         return True
     except Exception as exc:  # noqa: BLE001
         _log(
-            "[FAIL] smtp error=%s (Render free blocks SMTP — use Resend)",
+            "[FAIL] smtp error=%s (Render free blocks SMTP — use EMAIL_PROVIDER=gmail)",
             exc,
             level=logging.ERROR,
         )
         return False
 
 
-def _send_sync(*, to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
+def _send_sync(
+    *, to: str, subject: str, text_body: str, html_body: Optional[str] = None
+) -> bool:
     _ensure_email_file_logger()
     settings = get_settings()
     ts = datetime.now(timezone.utc).isoformat()
 
     if not settings.email_enabled:
-        _log("[SKIP] EMAIL_ENABLED=false to=%s subject=%r at=%s", to, subject, ts, level=logging.WARNING)
+        _log(
+            "[SKIP] EMAIL_ENABLED=false to=%s subject=%r at=%s",
+            to,
+            subject,
+            ts,
+            level=logging.WARNING,
+        )
         return False
     if not email_configured():
         _log(
@@ -220,7 +364,10 @@ def _send_sync(*, to: str, subject: str, text_body: str, html_body: Optional[str
         )
         return False
 
-    if email_provider() == "resend":
+    provider = email_provider()
+    if provider == "gmail":
+        return _send_via_gmail(to=to, subject=subject, text_body=text_body, html_body=html_body)
+    if provider == "resend":
         return _send_via_resend(to=to, subject=subject, text_body=text_body, html_body=html_body)
     return _send_via_smtp(to=to, subject=subject, text_body=text_body, html_body=html_body)
 
@@ -317,7 +464,7 @@ async def send_test_email(*, to: str, name: Optional[str]) -> bool:
         subject="GroundFit test email",
         text_body=(
             f"Hi {display},\n\n"
-            "This is a test email from GroundFit.\n"
+            "This is a test email from GroundFit (Gmail API / configured provider).\n"
             "If you received this, email delivery is working.\n\n"
             "— GroundFit\n"
         ),
