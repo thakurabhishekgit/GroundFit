@@ -29,6 +29,9 @@ async def start_align(
     """
     Pipeline: extract JD skills → match graph → rewrite sections → verify.
 
+    Modes: strict (rephrase; Projects locked) | deliberate (≤1 evidence-backed
+    Experience/Projects bullet swap when skill-graph context supports it).
+
     Returns draft LaTeX + warnings. Use /confirm for Add/Skip (no regen),
     then /finalize for a single final rewrite.
     """
@@ -85,7 +88,8 @@ async def finalize_align(
     """
     Regenerate LaTeX once using add_anyway overrides; skipped tokens stay out.
 
-    Project count is enforced — no add/remove projects.
+    Project count is enforced — no add/remove projects. Deliberate may rephrase
+    Projects bullets; strict restores Projects from the original resume.
     """
     run = await _get_owned_run(db, user.id, run_id)
     try:

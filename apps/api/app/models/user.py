@@ -2,9 +2,10 @@
 User model — mapped from Google OAuth identity.
 """
 
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -29,6 +30,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     google_sub: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    welcome_email_sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships (lazy selectin for async friendliness where needed)
     experience_context = relationship(
@@ -46,6 +50,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
         back_populates="user",
         foreign_keys="AlignmentRun.user_id",
     )
+    job_links = relationship("JobLink", back_populates="user", foreign_keys="JobLink.user_id")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"

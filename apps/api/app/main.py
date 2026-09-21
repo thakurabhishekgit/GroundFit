@@ -5,6 +5,7 @@ Run (from apps/api):
   uvicorn app.main:app --reload --host 0.0.0.0 --port 7000
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,25 +16,42 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.database import Base, engine
 import app.models  # noqa: F401 — register ORM metadata
+from app.services.reminder_service import reminder_poll_loop
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
-    Startup: create tables if missing + lightweight column patches.
-    Shutdown: dispose engine pool.
+    Startup: create tables if missing + lightweight column patches + reminder loop.
+    Shutdown: stop reminder loop, dispose engine pool.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Safe additive patch for DBs created before match_report_json existed
+        # Safe additive patches for DBs created before newer columns existed
         await conn.execute(
             text(
                 "ALTER TABLE alignment_runs "
                 "ADD COLUMN IF NOT EXISTS match_report_json JSONB"
             )
         )
-    yield
-    await engine.dispose()
+        await conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS welcome_email_sent_at TIMESTAMPTZ"
+            )
+        )
+
+    stop_event = asyncio.Event()
+    reminder_task = asyncio.create_task(reminder_poll_loop(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        try:
+            await asyncio.wait_for(reminder_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            reminder_task.cancel()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:

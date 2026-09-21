@@ -28,7 +28,7 @@ class AlignRequest(BaseModel):
 
     resume_id: UUID
     jd_text: str = Field(..., min_length=20)
-    mode: Literal["strict", "suggest", "explore"] = "strict"
+    mode: Literal["strict", "deliberate", "suggest", "explore"] = "strict"
 
 
 class AlignConfirmRequest(BaseModel):

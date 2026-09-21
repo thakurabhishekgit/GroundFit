@@ -1,7 +1,9 @@
 """
-Alignment pipeline: JD parse → skill match → rewrite Summary/Experience/Skills.
+Alignment pipeline: JD parse → skill match → rewrite sections.
 
-Projects / Education / Achievements are ALWAYS restored from the original resume.
+Strict: Summary / Experience / Skills; Projects+Education+certs restored.
+Deliberate: also rewrites Projects; may swap ≤1 weak Experience/Projects
+bullet for evidence-backed JD fit (never invent work).
 Add/Skip only saves decisions; Finalize runs one rewrite.
 """
 
@@ -44,24 +46,77 @@ Rules:
 """.strip()
 
 
-REWRITE_SYSTEM = """
+REWRITE_SYSTEM_STRICT = """
 You rewrite ONE LaTeX resume section body to better match a job description
 using ONLY the provided verified skills and evidence.
 
 Hard rules:
 - Return ONLY the section BODY as LaTeX (no \\documentclass, no \\section{...} at all).
 - Never output a new \\section command.
-- Never output \\resumeProject (projects are handled elsewhere — never invent project entries).
+- Never invent project entries with \\resumeProject unless this IS the Projects section body.
 - Preserve formatting macros exactly (\\resumeSubheading, \\resumeItemListStart, \\href, tabular*, \\vspace, etc.).
 - Do NOT invent employers, metrics, tools, products, or ownership.
 - Do NOT add skills missing from the verified list unless listed in allowed_overrides.
 - Prefer rephrasing existing bullets over fabricating new ones.
 - EXPERIENCE: Do NOT add/remove jobs. Only rephrase existing bullets. Keep the same number of \\resumeSubheading blocks.
 - EXPERIENCE: Internship products (e.g. Ticket360) stay as Experience bullets — never promote them into Projects.
-- EXPERIENCE: If the JD barely overlaps this job's bullets, lightly rephrase toward transferable matched skills (APIs, React, SQL, testing, Git, Docker, CI/CD) without inventing clinical/domain work you never did.
+- EXPERIENCE: If the JD barely overlaps this job's bullets, lightly rephrase toward transferable matched skills without inventing work you never did.
 - SKILLS: Reorder/regroup to surface matched JD skills you already have; do not invent categories of tools you lack.
+- PROJECTS: In strict mode you should not receive Projects; if you do, return the body unchanged.
 """.strip()
 
+
+REWRITE_SYSTEM_DELIBERATE = """
+You rewrite ONE LaTeX resume section body in DELIBERATE mode — like a careful human
+tailoring a resume for one JD, using ONLY verified skills and evidence.
+
+Hard rules:
+- Return ONLY the section BODY as LaTeX (no \\documentclass, no \\section{...} at all).
+- Never invent employers, companies, metrics, tools, or projects not backed by verified evidence.
+- Do NOT add skills missing from the verified list unless listed in allowed_overrides.
+- Preserve formatting macros (\\resumeSubheading, \\resumeItem, \\resumeProject, \\resumeItemListStart, \\href, etc.).
+
+Think like a real applicant:
+1) Read the JD focus (e.g. Python/RAG/AI, or Node/Express/TypeScript).
+2) Check verified evidence — did this person actually use those skills somewhere (role or project)?
+3) If YES: emphasize that work in this section.
+4) If NO: do not invent it; only light rephrase of what already exists.
+
+EXPERIENCE (deliberate):
+- Keep the SAME number of \\resumeSubheading job blocks (never add/remove employers).
+- You MAY replace AT MOST ONE existing \\item bullet that has the WEAKEST keyword overlap with the JD
+  with ONE new \\item that restates real work from verified evidence (e.g. Freshdesk Python/FastAPI/RAG),
+  written smoothly in the same voice/format as neighboring bullets.
+- Do NOT remove important ownership bullets (end-to-end product ownership, major metrics) just to chase keywords.
+- Prefer swapping a low-fit tech line (e.g. incidental C# / unrelated stack) over deleting core achievements.
+- Keep total \\item count the same OR at most +1 if the section had very few bullets and evidence clearly supports one added line — never dump many new bullets.
+- Never promote internship products into Projects here.
+
+PROJECTS (deliberate):
+- Keep the SAME projects (same number of \\resumeProject blocks; same project names/links).
+- You MAY rephrase stack lines and bullets to emphasize JD-matching tech that evidence already proves for THAT project.
+- You MAY replace AT MOST ONE weak \\item under a project with one evidence-backed bullet aligned to the JD.
+- Never invent a new project (no new \\resumeProject for Ticket360, Freshdesk, etc.).
+
+SKILLS / SUMMARY (deliberate):
+- Aggressively surface matched JD skills you already have; regroup categories.
+- Never list tools not in verified skills / overrides.
+""".strip()
+
+
+ALWAYS_PROTECTED_HINTS = (
+    "education",
+    "achivement",
+    "achievement",
+    "certificate",
+    "certificat",
+)
+
+# Used by restore when projects must stay byte-stable (strict mode)
+PROTECTED_SECTION_HINTS = ALWAYS_PROTECTED_HINTS + ("project",)
+
+REWRITE_SECTIONS_STRICT = ("summary", "experience", "skills")
+REWRITE_SECTIONS_DELIBERATE = ("summary", "experience", "projects", "skills")
 
 CONCEPT_COVERED_BY: dict[str, set[str]] = {
     "idempotent-api-design": {"redis", "rest", "spring-boot", "java", "microservices"},
@@ -146,17 +201,29 @@ SKILL_FAMILIES: dict[str, set[str]] = {
     "cicd": {"ci-cd", "cicd", "ci/cd", "cloud-ci"},
     "mongodb": {"mongodb", "mongo", "nosql", "no-sql"},
     "rest": {"rest", "rest-api", "restful", "rest-apis"},
+    "python": {"python", "python3", "py"},
+    "fastapi": {"fastapi", "fast-api"},
+    "nodejs": {"nodejs", "node", "node.js", "node-js"},
+    "express": {"express", "express.js", "expressjs"},
+    "typescript": {"typescript", "ts"},
 }
 
-REWRITE_SECTIONS = ("summary", "experience", "skills")
-PROTECTED_SECTION_HINTS = (
-    "project",
-    "education",
-    "achivement",
-    "achievement",
-    "certificate",
-    "certificat",
-)
+
+def _is_deliberate(mode: str) -> bool:
+    return (mode or "").lower() == "deliberate"
+
+
+def _rewrite_system_for_mode(mode: str) -> str:
+    return REWRITE_SYSTEM_DELIBERATE if _is_deliberate(mode) else REWRITE_SYSTEM_STRICT
+
+
+def _rewrite_section_names(mode: str) -> tuple[str, ...]:
+    return REWRITE_SECTIONS_DELIBERATE if _is_deliberate(mode) else REWRITE_SECTIONS_STRICT
+
+
+def _restore_hints_for_mode(mode: str) -> tuple[str, ...]:
+    """Strict locks Projects; deliberate allows Projects rewrite (education/certs still locked)."""
+    return ALWAYS_PROTECTED_HINTS if _is_deliberate(mode) else PROTECTED_SECTION_HINTS
 
 
 async def run_alignment(
@@ -223,6 +290,17 @@ async def run_alignment(
             },
         }
 
+        mode_note = (
+            "DELIBERATE mode: may swap at most one weak Experience/Projects bullet "
+            "for evidence-backed JD-aligned work. Never invent work not in verified evidence. "
+            "Do not emit \\section headers."
+            if _is_deliberate(payload.mode)
+            else (
+                "STRICT mode: rephrase only; Projects restored from original. "
+                "Do not emit \\section or invent \\resumeProject."
+            )
+        )
+
         latex = await _rewrite_sections(
             latex=resume.latex_source,
             jd_text=payload.jd_text,
@@ -231,15 +309,17 @@ async def run_alignment(
             missing=missing_must,
             evidence_blob=evidence_blob,
             allowed_overrides=[],
-            extra_note="Do not emit \\section or \\resumeProject. Projects are restored automatically.",
+            extra_note=mode_note,
         )
-        latex = restore_protected_sections(resume.latex_source, latex)
+        latex = restore_protected_sections(
+            resume.latex_source, latex, mode=payload.mode
+        )
 
         warnings = _build_jd_gap_warnings(missing_must=missing_must)
 
         run.result_latex = latex
         run.changelog_json = {
-            "sections": list(REWRITE_SECTIONS),
+            "sections": list(_rewrite_section_names(payload.mode)),
             "match_report": match_report,
         }
         run.match_report_json = match_report
@@ -335,10 +415,15 @@ async def finalize_alignment(
         extra_note=(
             f"User allowed overrides: {overrides}. "
             f"Do NOT mention skipped tokens: {sorted(skipped)}. "
-            "Do not emit \\section or \\resumeProject."
+            + (
+                "DELIBERATE: evidence-backed bullet swap allowed (at most one weak line). "
+                if _is_deliberate(run.mode)
+                else "STRICT: do not invent \\resumeProject; Projects restored. "
+            )
+            + "Do not emit \\section."
         ),
     )
-    latex = restore_protected_sections(resume.latex_source, latex)
+    latex = restore_protected_sections(resume.latex_source, latex, mode=run.mode)
 
     run.result_latex = latex
     run.warnings_json = warnings
@@ -350,19 +435,21 @@ async def finalize_alignment(
     return run
 
 
-def restore_protected_sections(original: str, rewritten: str) -> str:
+def restore_protected_sections(
+    original: str, rewritten: str, mode: str = "strict"
+) -> str:
     """
-    Force Projects / Education / Achievements from the original resume.
+    Force Education / Achievements (and Projects in strict) from the original.
 
-    Replaces body (and header) when present; re-inserts the section if the
-    model deleted it. Prevents inventing Ticket360-as-project, etc.
+    Deliberate mode leaves Projects as rewritten (still evidence-bound by prompt).
     """
     out = rewritten
     restored: set[str] = set()
+    hints = _restore_hints_for_mode(mode)
 
     for orig in split_sections(original):
         name_l = orig.name.lower()
-        if not any(h in name_l for h in PROTECTED_SECTION_HINTS):
+        if not any(h in name_l for h in hints):
             continue
         if name_l in restored:
             continue
@@ -370,8 +457,7 @@ def restore_protected_sections(original: str, rewritten: str) -> str:
 
         cur = find_section(out, orig.name)
         if cur is None:
-            # Try loose hint (e.g. "project")
-            for h in PROTECTED_SECTION_HINTS:
+            for h in hints:
                 if h in name_l:
                     cur = find_section(out, h)
                     if cur is not None:
@@ -387,6 +473,8 @@ def restore_protected_sections(original: str, rewritten: str) -> str:
             after = "experience" if find_section(out, "experience") else "education"
             out = insert_section_after(out, after, orig.header, orig.body)
 
+    # Strict: strip leaked \\resumeProject from Experience
+    # Deliberate: still strip \\resumeProject from Experience (projects belong in Projects)
     exp = find_section(out, "experience")
     if exp and "\\resumeProject" in exp.body:
         cleaned = re.sub(
@@ -479,7 +567,13 @@ async def _rewrite_sections(
 ) -> str:
     present = {sec.name.lower() for sec in split_sections(latex)}
     out = latex
-    for wanted in REWRITE_SECTIONS:
+    system = _rewrite_system_for_mode(mode)
+    # Sections that must never be selected via the "unprotected" path when rewriting others
+    skip_hints = ALWAYS_PROTECTED_HINTS
+    if not _is_deliberate(mode):
+        skip_hints = PROTECTED_SECTION_HINTS
+
+    for wanted in _rewrite_section_names(mode):
         if not any(wanted in name for name in present):
             continue
         before_sec = next(
@@ -487,17 +581,22 @@ async def _rewrite_sections(
                 s
                 for s in split_sections(out)
                 if wanted in s.name.lower()
-                and not any(h in s.name.lower() for h in PROTECTED_SECTION_HINTS)
+                and not any(h in s.name.lower() for h in skip_hints if h != wanted)
             ),
             None,
         )
+        # Projects: name contains "project"; skip_hints in deliberate excludes "project"
+        if before_sec is None and wanted == "projects" and _is_deliberate(mode):
+            before_sec = find_section(out, "project")
         if before_sec is None:
             continue
 
         sub_count_before = before_sec.body.count("\\resumeSubheading")
+        project_count_before = before_sec.body.count("\\resumeProject")
+        item_count_before = len(re.findall(r"\\item\b", before_sec.body))
 
         rewritten_body = await chat_text(
-            system=REWRITE_SYSTEM,
+            system=system,
             user=_rewrite_user_prompt(
                 section_name=before_sec.name,
                 body=before_sec.body,
@@ -516,8 +615,22 @@ async def _rewrite_sections(
         if wanted == "experience":
             if rewritten_body.count("\\resumeSubheading") != sub_count_before:
                 rewritten_body = before_sec.body
+            else:
+                item_after = len(re.findall(r"\\item\b", rewritten_body))
+                # Deliberate may +1 item; strict must keep count
+                if _is_deliberate(mode):
+                    if item_after > item_count_before + 1 or item_after < max(
+                        0, item_count_before - 1
+                    ):
+                        rewritten_body = before_sec.body
+                elif item_after != item_count_before:
+                    # Strict: allow same count only (rephrase)
+                    pass  # rephrase can keep same \\item count; don't hard-fail tiny diffs
+        if wanted == "projects":
+            if rewritten_body.count("\\resumeProject") != project_count_before:
+                rewritten_body = before_sec.body
 
-        out = replace_section_body(out, wanted, rewritten_body)
+        out = replace_section_body(out, wanted if wanted != "projects" else "project", rewritten_body)
     return out
 
 
@@ -595,12 +708,26 @@ def _rewrite_user_prompt(
     allowed_overrides: list[str],
     extra_note: str = "",
 ) -> str:
+    deliberate_hint = ""
+    if _is_deliberate(mode):
+        deliberate_hint = (
+            "\nDELIBERATE CHECKLIST (do this before rewriting):\n"
+            "1) Infer JD stack focus from the JD text (e.g. Python/RAG/AI vs Node/Express/TS).\n"
+            "2) Scan VERIFIED EVIDENCE below — did this person actually use that stack "
+            "(role or project, e.g. Freshdesk Python/FastAPI/RAG)?\n"
+            "3) If YES and this is Experience or Projects: replace the single weakest "
+            "keyword-overlap \\item with one smooth evidence-backed line; keep important "
+            "ownership/metric bullets.\n"
+            "4) If NO evidence for that stack: only light rephrase — never invent.\n"
+            "5) Same employer/project count; never invent new \\resumeProject or jobs.\n"
+        )
     return (
         f"Section name: {section_name}\n"
         f"Mode: {mode}\n"
         f"Matched skills: {matched}\n"
         f"Missing from context (do not invent unless override): {missing}\n"
         f"allowed_overrides: {allowed_overrides}\n"
+        f"{deliberate_hint}"
         f"{extra_note}\n\n"
         f"Verified evidence:\n{evidence_blob}\n\n"
         f"Job description:\n{jd_text}\n\n"

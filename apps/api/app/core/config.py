@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
 
+    # --- Email (SMTP) — leave empty / EMAIL_ENABLED=false until configured ---
+    email_enabled: bool = Field(default=False, alias="EMAIL_ENABLED")
+    smtp_host: str = Field(default="", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_user: str = Field(default="", alias="SMTP_USER")
+    smtp_password: str = Field(default="", alias="SMTP_PASSWORD")
+    smtp_from: str = Field(default="", alias="SMTP_FROM")
+    smtp_tls: bool = Field(default=True, alias="SMTP_TLS")
+    smtp_ssl: bool = Field(default=False, alias="SMTP_SSL")
+
+    # Reminder worker: email when job expires within this many hours and not applied
+    reminder_hours_before: int = Field(default=12, alias="REMINDER_HOURS_BEFORE")
+    reminder_poll_seconds: int = Field(default=300, alias="REMINDER_POLL_SECONDS")
+    cron_secret: str = Field(default="", alias="CRON_SECRET")
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:

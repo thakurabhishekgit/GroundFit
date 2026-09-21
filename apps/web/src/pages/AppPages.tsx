@@ -296,6 +296,7 @@ export function AlignPage() {
   const [title, setTitle] = useState("Base resume");
   const [latex, setLatex] = useState(() => loadStoredLatex());
   const [jd, setJd] = useState("");
+  const [mode, setMode] = useState<"strict" | "deliberate">("strict");
   const [run, setRun] = useState<AlignmentRun | null>(null);
   const [resultTab, setResultTab] = useState<"warnings" | "matching" | "latex" | "preview">(
     "warnings"
@@ -320,7 +321,7 @@ export function AlignPage() {
     try {
       const { api } = await import("../lib/api");
       const created = await api.createResume(token, title, latex);
-      const result = await api.align(token, created.id, jd, "strict");
+      const result = await api.align(token, created.id, jd, mode);
       setRun(result);
       if ((result.warnings_json || []).length === 0) {
         setResultTab("latex");
@@ -399,7 +400,7 @@ export function AlignPage() {
       const updated = await api.finalizeAlign(token, run.id);
       setRun(updated);
       setResultTab("preview");
-      setFlash("Final resume generated once. Projects kept from your original LaTeX.");
+.setFlash("Final resume generated once.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Finalize failed");
     } finally {
@@ -433,9 +434,36 @@ export function AlignPage() {
         <div className="card">
           <h2 className="panel-title">Resume + JD</h2>
           <p className="panel-sub muted">
-            Strict mode — no new/removed projects; only rephrase existing content. Add/Skip
-            saves decisions; Finalize regenerates LaTeX once.
+            {mode === "deliberate"
+              ? "Deliberate — may swap one weak Experience/Projects bullet for evidence-backed JD fit (e.g. Freshdesk Python/RAG). Never invents work."
+              : "Strict — rephrase only; Projects locked. Add/Skip saves decisions; Finalize regenerates once."}
           </p>
+          <div className="field">
+            <label>Align mode</label>
+            <div className="mode-toggle" role="group" aria-label="Align mode">
+              <button
+                type="button"
+                className={`mode-btn${mode === "strict" ? " active" : ""}`}
+                onClick={() => setMode("strict")}
+              >
+                Strict
+              </button>
+              <button
+                type="button"
+                className={`mode-btn${mode === "deliberate" ? " active" : ""}`}
+                onClick={() => setMode("deliberate")}
+              >
+                Deliberate
+              </button>
+            </div>
+            {mode === "deliberate" && (
+              <p className="muted" style={{ marginTop: "0.45rem", fontSize: "0.8rem" }}>
+                Uses your skill graph: if you actually did Python/Node/etc. work (e.g. Freshdesk),
+                it can replace the least JD-relevant bullet with that — not invent new jobs or
+                projects.
+              </p>
+            )}
+          </div>
           <div className="field">
             <label htmlFor="title">Resume title</label>
             <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -456,7 +484,7 @@ export function AlignPage() {
           </div>
           <div className="panel-footer">
             <button className="btn btn-primary" type="submit" disabled={busy}>
-              {busy ? "Aligning…" : "Align (strict)"}
+              {busy ? "Aligning…" : mode === "deliberate" ? "Align (deliberate)" : "Align (strict)"}
             </button>
             {error && <p className="error" style={{ marginTop: "0.65rem" }}>{error}</p>}
           </div>
