@@ -108,6 +108,21 @@ async def delete_job_link(
 
 
 @router.post(
+    "/email/test",
+    summary="Send a test email to the current user (SMTP check)",
+)
+async def send_test_email_to_me(user: CurrentUser) -> dict[str, str | bool]:
+    from app.services.email_service import send_test_email
+
+    ok = await send_test_email(to=user.email, name=user.name)
+    return {
+        "ok": ok,
+        "to": user.email,
+        "status": "sent" if ok else "failed_or_disabled — check apps/api/logs/email.log",
+    }
+
+
+@router.post(
     "/reminders/dispatch",
     summary="Cron: send due expiry reminder emails",
 )
