@@ -7,6 +7,7 @@ Run (from apps/api):
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,18 +17,19 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.database import Base, engine
 import app.models  # noqa: F401 — register ORM metadata
+from app.services.keepalive_service import keepalive_loop
 from app.services.reminder_service import reminder_poll_loop
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
-    Startup: create tables if missing + lightweight column patches + reminder loop.
-    Shutdown: stop reminder loop, dispose engine pool.
+    Startup: create tables if missing + lightweight column patches +
+    reminder loop + optional self keep-alive ping.
+    Shutdown: stop background tasks, dispose engine pool.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Safe additive patches for DBs created before newer columns existed
         await conn.execute(
             text(
                 "ALTER TABLE alignment_runs "
@@ -43,14 +45,16 @@ async def lifespan(_app: FastAPI):
 
     stop_event = asyncio.Event()
     reminder_task = asyncio.create_task(reminder_poll_loop(stop_event))
+    keepalive_task = asyncio.create_task(keepalive_loop(stop_event))
     try:
         yield
     finally:
         stop_event.set()
-        try:
-            await asyncio.wait_for(reminder_task, timeout=5)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            reminder_task.cancel()
+        for task in (reminder_task, keepalive_task):
+            try:
+                await asyncio.wait_for(task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
         await engine.dispose()
 
 
@@ -77,6 +81,22 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Liveness probe for Render / local checks."""
         return {"status": "ok", "service": settings.app_name}
+
+    @application.get("/ping", tags=["system"])
+    async def ping() -> dict[str, str | bool]:
+        """
+        Keep-alive endpoint for external cron / self-ping.
+
+        Render free: idle spin-down after ~15 minutes with no inbound traffic.
+        Hit this at least every 10 minutes from GitHub Actions (or similar)
+        so the service stays awake for reminder emails.
+        """
+        return {
+            "status": "ok",
+            "pong": True,
+            "utc": datetime.now(timezone.utc).isoformat(),
+            "service": settings.app_name,
+        }
 
     application.include_router(api_router)
     return application

@@ -59,8 +59,12 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
 
-    # --- Email (SMTP) — leave empty / EMAIL_ENABLED=false until configured ---
+    # --- Email ---
+    # Render free blocks SMTP (25/465/587). Use Resend (HTTPS) in production.
     email_enabled: bool = Field(default=False, alias="EMAIL_ENABLED")
+    email_provider: str = Field(default="auto", alias="EMAIL_PROVIDER")  # auto|resend|smtp
+    resend_api_key: str = Field(default="", alias="RESEND_API_KEY")
+    resend_from: str = Field(default="", alias="RESEND_FROM")  # e.g. GroundFit <onboarding@resend.dev>
     smtp_host: str = Field(default="", alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
     smtp_user: str = Field(default="", alias="SMTP_USER")
@@ -71,8 +75,15 @@ class Settings(BaseSettings):
 
     # Reminder worker: email when job expires within this many hours and not applied
     reminder_hours_before: int = Field(default=12, alias="REMINDER_HOURS_BEFORE")
-    reminder_poll_seconds: int = Field(default=300, alias="REMINDER_POLL_SECONDS")
+    reminder_poll_seconds: int = Field(default=60, alias="REMINDER_POLL_SECONDS")
     cron_secret: str = Field(default="", alias="CRON_SECRET")
+
+    # Keep-alive for Render free tier (idle spin-down after 15 min)
+    # Self-ping only works WHILE the process is already awake; use GitHub Actions
+    # cron as the reliable wake source. Interval must be < 15 min (use 10).
+    keepalive_enabled: bool = Field(default=False, alias="KEEPALIVE_ENABLED")
+    keepalive_interval_seconds: int = Field(default=600, alias="KEEPALIVE_INTERVAL_SECONDS")
+    public_api_url: str = Field(default="", alias="PUBLIC_API_URL")
 
     @field_validator("database_url", mode="before")
     @classmethod

@@ -1,0 +1,54 @@
+# Wake Render free API + dispatch job expiry reminders every 10 minutes.
+#
+# Why 10 min: Render free web services spin down after ~15 min with no inbound
+# HTTP. Cold start is ~1 minute. Pinging every 10 min keeps the idle timer reset.
+#
+# Repo secrets (Settings → Secrets → Actions):
+#   GROUNDFIT_API_URL   e.g. https://groundfit.onrender.com
+#   CRON_SECRET         same value as Render env CRON_SECRET
+#
+# Optional Render env for in-process self-ping (only while already awake):
+#   KEEPALIVE_ENABLED=true
+#   PUBLIC_API_URL=https://groundfit.onrender.com
+#   KEEPALIVE_INTERVAL_SECONDS=600
+
+name: Keepalive + reminders
+
+on:
+  schedule:
+    # Every 10 minutes (UTC)
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping-and-remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API (wake / keep-alive)
+        env:
+          API_URL: ${{ secrets.GROUNDFIT_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "Missing secret GROUNDFIT_API_URL"
+            exit 1
+          fi
+          BASE="${API_URL%/}"
+          echo "GET $BASE/ping"
+          curl -fsS --retry 3 --retry-delay 5 --max-time 90 "$BASE/ping"
+          echo
+
+      - name: Dispatch due reminder emails
+        env:
+          API_URL: ${{ secrets.GROUNDFIT_API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${API_URL%/}"
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET not set — skipping reminder dispatch"
+            exit 0
+          fi
+          echo "POST $BASE/api/v1/lists/reminders/dispatch"
+          curl -fsS --retry 2 --retry-delay 5 --max-time 120 \
+            -X POST "$BASE/api/v1/lists/reminders/dispatch" \
+            -H "X-Cron-Secret: $CRON_SECRET"
+          echo

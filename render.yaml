@@ -32,3 +32,35 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: EMAIL_ENABLED
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: "resend"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TLS
+        value: "true"
+      - key: CRON_SECRET
+        sync: false
+      - key: REMINDER_HOURS_BEFORE
+        value: "12"
+      - key: REMINDER_POLL_SECONDS
+        value: "60"
+      - key: KEEPALIVE_ENABLED
+        value: "true"
+      - key: KEEPALIVE_INTERVAL_SECONDS
+        value: "600"
+      - key: PUBLIC_API_URL
+        sync: false

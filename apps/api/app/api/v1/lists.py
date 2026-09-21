@@ -131,17 +131,30 @@ async def delete_job_link(
 
 @router.post(
     "/email/test",
-    summary="Send a test email to the current user (SMTP check)",
+    summary="Send a test email to the current user (delivery check)",
 )
 async def send_test_email_to_me(user: CurrentUser) -> dict[str, str | bool]:
-    from app.services.email_service import send_test_email
+    from app.services.email_service import email_status, send_test_email
 
+    status = email_status()
     ok = await send_test_email(to=user.email, name=user.name)
     return {
         "ok": ok,
         "to": user.email,
-        "status": "sent" if ok else "failed_or_disabled — check apps/api/logs/email.log",
+        "provider": str(status.get("provider")),
+        "configured": bool(status.get("configured")),
+        "status": "sent" if ok else "failed — check Render logs for [email] lines",
     }
+
+
+@router.get(
+    "/email/status",
+    summary="Email config diagnostics (no secrets)",
+)
+async def get_email_status(_user: CurrentUser) -> dict:
+    from app.services.email_service import email_status
+
+    return email_status()
 
 
 @router.post(

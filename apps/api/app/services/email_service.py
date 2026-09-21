@@ -1,8 +1,11 @@
 """
-Transactional email via SMTP.
+Transactional email.
 
-Skips when EMAIL_ENABLED is false or SMTP is incomplete.
-Writes every attempt to logs/email.log for debugging.
+Providers:
+  - resend  → HTTPS API (works on Render free; SMTP ports are blocked there)
+  - smtp    → classic SMTP (local / paid hosts)
+
+Set EMAIL_PROVIDER=resend + RESEND_API_KEY for production on Render free.
 """
 
 from __future__ import annotations
@@ -14,7 +17,9 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import httpx
 
 from app.core.config import get_settings
 
@@ -40,24 +45,53 @@ def _ensure_email_file_logger() -> None:
             logging.Formatter("%(asctime)s %(levelname)s %(message)s")
         )
         handler.setLevel(logging.INFO)
-        # Avoid duplicate handlers on reload
         if not any(
             isinstance(h, RotatingFileHandler)
             and getattr(h, "baseFilename", "").endswith("email.log")
             for h in logger.handlers
         ):
             logger.addHandler(handler)
+        # Always also log to stderr (Render captures this)
+        if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler) for h in logger.handlers):
+            sh = logging.StreamHandler()
+            sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [email] %(message)s"))
+            sh.setLevel(logging.INFO)
+            logger.addHandler(sh)
         logger.setLevel(logging.INFO)
-        logger.propagate = True  # also show in uvicorn console
+        logger.propagate = False
         _email_file_ready = True
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Could not set up email.log")
+
+
+def _log(msg: str, *args: Any, level: int = logging.INFO) -> None:
+    _ensure_email_file_logger()
+    logger.log(level, msg, *args)
+    # Belt-and-suspenders for Render dashboards that only show print-ish stdout
+    try:
+        print(("[email] " + msg) % args if args else "[email] " + msg, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def email_provider() -> str:
+    settings = get_settings()
+    raw = (settings.email_provider or "auto").strip().lower()
+    if raw in {"resend", "smtp"}:
+        return raw
+    # auto: prefer Resend when key present (Render-safe)
+    if settings.resend_api_key:
+        return "resend"
+    return "smtp"
 
 
 def email_configured() -> bool:
     settings = get_settings()
     if not settings.email_enabled:
         return False
+    provider = email_provider()
+    if provider == "resend":
+        return bool(settings.resend_api_key and (settings.smtp_from or settings.resend_from))
     return bool(
         settings.smtp_host
         and settings.smtp_from
@@ -66,25 +100,70 @@ def email_configured() -> bool:
     )
 
 
-def _send_sync(*, to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
-    _ensure_email_file_logger()
+def email_status() -> dict[str, Any]:
+    """Safe diagnostics (no secrets)."""
     settings = get_settings()
-    ts = datetime.now(timezone.utc).isoformat()
+    provider = email_provider()
+    return {
+        "email_enabled": settings.email_enabled,
+        "provider": provider,
+        "configured": email_configured(),
+        "from": settings.resend_from or settings.smtp_from or None,
+        "smtp_host": settings.smtp_host or None,
+        "resend_key_set": bool(settings.resend_api_key),
+        "note": (
+            "Render free blocks SMTP ports 25/465/587 — use EMAIL_PROVIDER=resend + RESEND_API_KEY"
+            if provider == "smtp"
+            else "Resend uses HTTPS (works on Render free)"
+        ),
+    }
 
-    if not settings.email_enabled:
-        logger.warning(
-            "[SKIP] EMAIL_ENABLED=false to=%s subject=%r at=%s", to, subject, ts
-        )
-        return False
-    if not email_configured():
-        logger.warning(
-            "[SKIP] SMTP incomplete (need HOST/FROM/USER/PASSWORD) to=%s subject=%r at=%s",
-            to,
-            subject,
-            ts,
-        )
+
+def _from_address() -> str:
+    settings = get_settings()
+    return (settings.resend_from or settings.smtp_from or "").strip()
+
+
+def _send_via_resend(*, to: str, subject: str, text_body: str, html_body: Optional[str]) -> bool:
+    settings = get_settings()
+    from_addr = _from_address()
+    payload: dict[str, Any] = {
+        "from": from_addr,
+        "to": [to],
+        "subject": subject,
+        "text": text_body,
+    }
+    if html_body:
+        payload["html"] = html_body
+
+    _log("[TRY] provider=resend to=%s subject=%r from=%s", to, subject, from_addr)
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if res.status_code >= 400:
+            _log(
+                "[FAIL] resend status=%s body=%s",
+                res.status_code,
+                res.text[:500],
+                level=logging.ERROR,
+            )
+            return False
+        _log("[OK] resend to=%s id=%s", to, res.json().get("id"))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log("[FAIL] resend error=%s", exc, level=logging.ERROR)
         return False
 
+
+def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: Optional[str]) -> bool:
+    settings = get_settings()
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from
@@ -94,35 +173,56 @@ def _send_sync(*, to: str, subject: str, text_body: str, html_body: Optional[str
         msg.add_alternative(html_body, subtype="html")
 
     password = (settings.smtp_password or "").replace(" ", "")
-
+    _log(
+        "[TRY] provider=smtp host=%s port=%s to=%s subject=%r",
+        settings.smtp_host,
+        settings.smtp_port,
+        to,
+        subject,
+    )
     try:
-        logger.info(
-            "[TRY] host=%s port=%s tls=%s ssl=%s user=%s to=%s subject=%r",
-            settings.smtp_host,
-            settings.smtp_port,
-            settings.smtp_tls,
-            settings.smtp_ssl,
-            settings.smtp_user,
-            to,
-            subject,
-        )
         if settings.smtp_ssl:
-            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
+            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=12) as smtp:
                 smtp.login(settings.smtp_user, password)
                 smtp.send_message(msg)
         else:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=12) as smtp:
                 if settings.smtp_tls:
                     smtp.starttls()
                 smtp.login(settings.smtp_user, password)
                 smtp.send_message(msg)
-        logger.info("[OK] Email sent to=%s subject=%r at=%s", to, subject, ts)
+        _log("[OK] smtp to=%s subject=%r", to, subject)
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "[FAIL] Email to=%s subject=%r error=%s at=%s", to, subject, exc, ts
+        _log(
+            "[FAIL] smtp error=%s (Render free blocks SMTP — use Resend)",
+            exc,
+            level=logging.ERROR,
         )
         return False
+
+
+def _send_sync(*, to: str, subject: str, text_body: str, html_body: Optional[str] = None) -> bool:
+    _ensure_email_file_logger()
+    settings = get_settings()
+    ts = datetime.now(timezone.utc).isoformat()
+
+    if not settings.email_enabled:
+        _log("[SKIP] EMAIL_ENABLED=false to=%s subject=%r at=%s", to, subject, ts, level=logging.WARNING)
+        return False
+    if not email_configured():
+        _log(
+            "[SKIP] email not configured (provider=%s) to=%s subject=%r",
+            email_provider(),
+            to,
+            subject,
+            level=logging.WARNING,
+        )
+        return False
+
+    if email_provider() == "resend":
+        return _send_via_resend(to=to, subject=subject, text_body=text_body, html_body=html_body)
+    return _send_via_smtp(to=to, subject=subject, text_body=text_body, html_body=html_body)
 
 
 async def send_email(
@@ -132,7 +232,6 @@ async def send_email(
     text_body: str,
     html_body: Optional[str] = None,
 ) -> bool:
-    """Send email off the event loop (smtplib is blocking)."""
     return await asyncio.to_thread(
         _send_sync,
         to=to,
@@ -218,13 +317,13 @@ async def send_test_email(*, to: str, name: Optional[str]) -> bool:
         subject="GroundFit test email",
         text_body=(
             f"Hi {display},\n\n"
-            "This is a test email from GroundFit SMTP settings.\n"
+            "This is a test email from GroundFit.\n"
             "If you received this, email delivery is working.\n\n"
             "— GroundFit\n"
         ),
         html_body=(
             f"<p>Hi {display},</p>"
-            "<p>This is a <strong>test email</strong> from GroundFit SMTP settings.</p>"
+            "<p>This is a <strong>test email</strong> from GroundFit.</p>"
             "<p>If you received this, email delivery is working.</p>"
             "<p>— GroundFit</p>"
         ),
