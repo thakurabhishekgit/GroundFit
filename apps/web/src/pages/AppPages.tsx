@@ -54,6 +54,7 @@ export function AppLayout() {
             Context
           </NavLink>
           <NavLink to="/app/align">Align</NavLink>
+          <NavLink to="/app/lists">Lists</NavLink>
           <div className="profile-menu" ref={menuRef}>
             <button
               type="button"
@@ -400,7 +401,7 @@ export function AlignPage() {
       const updated = await api.finalizeAlign(token, run.id);
       setRun(updated);
       setResultTab("preview");
-.setFlash("Final resume generated once.");
+      setFlash("Final resume generated once.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Finalize failed");
     } finally {

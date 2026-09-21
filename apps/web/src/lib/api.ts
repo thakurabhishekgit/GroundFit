@@ -78,7 +78,20 @@ async function request<T>(
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        detail = body.detail
+          .map((e: { loc?: unknown[]; msg?: string }) => {
+            const where = Array.isArray(e.loc) ? e.loc.slice(1).join(".") : "";
+            return where ? `${where}: ${e.msg}` : e.msg || JSON.stringify(e);
+          })
+          .join("; ");
+      } else if (body.detail != null) {
+        detail = JSON.stringify(body.detail);
+      } else {
+        detail = JSON.stringify(body);
+      }
     } catch {
       /* ignore */
     }
@@ -164,4 +177,59 @@ export const api = {
       method: "POST",
       token,
     }),
+
+  listJobLinks: (token: string) =>
+    request<JobLink[]>("/api/v1/lists", { token }),
+
+  createJobLink: (
+    token: string,
+    body: {
+      subject: string;
+      url: string;
+      about?: string | null;
+      expires_at?: string | null;
+      applied?: boolean;
+    }
+  ) =>
+    request<JobLink>("/api/v1/lists", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  updateJobLink: (
+    token: string,
+    id: string,
+    body: {
+      subject?: string;
+      url?: string;
+      about?: string | null;
+      expires_at?: string | null;
+      applied?: boolean;
+      clear_expires_at?: boolean;
+    }
+  ) =>
+    request<JobLink>(`/api/v1/lists/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  deleteJobLink: (token: string, id: string) =>
+    request<void>(`/api/v1/lists/${id}`, {
+      method: "DELETE",
+      token,
+    }),
+};
+
+export type JobLink = {
+  id: string;
+  subject: string;
+  url: string;
+  about?: string | null;
+  expires_at?: string | null;
+  applied: boolean;
+  reminder_sent_at?: string | null;
+  created_at: string;
+  updated_at: string;
 };

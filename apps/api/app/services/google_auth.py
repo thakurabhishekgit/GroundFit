@@ -2,6 +2,7 @@
 Google ID token verification and user upsert.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 from google.auth.transport import requests as google_requests
@@ -13,6 +14,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.models.user import User
 from app.schemas.auth import TokenResponse, UserOut
+from app.services.email_service import send_welcome_email
 
 
 class GoogleAuthError(Exception):
@@ -57,11 +59,12 @@ async def verify_google_id_token(token: str) -> dict[str, Any]:
 async def upsert_user_from_google_claims(
     db: AsyncSession,
     claims: dict[str, Any],
-) -> User:
+) -> tuple[User, bool]:
     """
     Create or update a User row from verified Google claims.
 
     Match key: `google_sub`. Also refreshes name / picture / email.
+    Returns (user, created) where created=True on first-time signup.
     """
     google_sub = claims["sub"]
     email = claims["email"]
@@ -72,6 +75,7 @@ async def upsert_user_from_google_claims(
         select(User).where(User.google_sub == google_sub, User.is_deleted.is_(False))
     )
     user = result.scalar_one_or_none()
+    created = False
 
     if user is None:
         # Email collision with different google_sub → reject to avoid account takeover
@@ -89,6 +93,7 @@ async def upsert_user_from_google_claims(
             is_active=True,
         )
         db.add(user)
+        created = True
     else:
         user.email = email
         user.name = name
@@ -96,15 +101,31 @@ async def upsert_user_from_google_claims(
 
     await db.commit()
     await db.refresh(user)
-    return user
+    return user, created
 
 
 async def login_with_google_id_token(db: AsyncSession, raw_id_token: str) -> TokenResponse:
     """
     Full Google login pipeline: verify → upsert user → issue GroundFit JWT.
+    First-time users get a welcome email (when SMTP is configured).
     """
     claims = await verify_google_id_token(raw_id_token)
-    user = await upsert_user_from_google_claims(db, claims)
+    user, created = await upsert_user_from_google_claims(db, claims)
+
+    if user.welcome_email_sent_at is None:
+        settings = get_settings()
+        if settings.email_enabled:
+            sent = await send_welcome_email(to=user.email, name=user.name)
+            if sent:
+                user.welcome_email_sent_at = datetime.now(timezone.utc)
+                await db.commit()
+                await db.refresh(user)
+        elif created:
+            # SMTP off — mark so we don't intend forever; enable EMAIL later for new users only
+            user.welcome_email_sent_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(user)
+
     access_token = create_access_token(
         subject=user.id,
         extra={"email": user.email, "name": user.name},

@@ -1,10 +1,18 @@
 """Schemas for Lists / job link CRUD."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _empty_to_none(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 class JobLinkCreate(BaseModel):
@@ -22,14 +30,28 @@ class JobLinkCreate(BaseModel):
             raise ValueError("url is required")
         if not v.startswith(("http://", "https://")):
             v = "https://" + v
-        # Validate shape via HttpUrl without changing type of field
-        HttpUrl(v)
+        host = v.split("://", 1)[-1].split("/")[0]
+        if not host:
+            raise ValueError("url looks invalid")
         return v
 
     @field_validator("subject")
     @classmethod
     def strip_subject(cls, value: str) -> str:
-        return value.strip()
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("subject is required")
+        return cleaned
+
+    @field_validator("about", mode="before")
+    @classmethod
+    def empty_about(cls, value: Any) -> Any:
+        return _empty_to_none(value)
+
+    @field_validator("expires_at", mode="before")
+    @classmethod
+    def empty_expires(cls, value: Any) -> Any:
+        return _empty_to_none(value)
 
 
 class JobLinkUpdate(BaseModel):
@@ -46,15 +68,34 @@ class JobLinkUpdate(BaseModel):
         if value is None:
             return value
         v = value.strip()
+        if not v:
+            raise ValueError("url is required")
         if not v.startswith(("http://", "https://")):
             v = "https://" + v
-        HttpUrl(v)
+        host = v.split("://", 1)[-1].split("/")[0]
+        if not host:
+            raise ValueError("url looks invalid")
         return v
 
     @field_validator("subject")
     @classmethod
     def strip_subject(cls, value: Optional[str]) -> Optional[str]:
-        return value.strip() if value is not None else value
+        if value is None:
+            return value
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("subject is required")
+        return cleaned
+
+    @field_validator("about", mode="before")
+    @classmethod
+    def empty_about(cls, value: Any) -> Any:
+        return _empty_to_none(value)
+
+    @field_validator("expires_at", mode="before")
+    @classmethod
+    def empty_expires(cls, value: Any) -> Any:
+        return _empty_to_none(value)
 
 
 class JobLinkOut(BaseModel):
