@@ -8,9 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ExperienceContextUpsert(BaseModel):
-    """Save / replace the user's raw experience narrative."""
+    """Save / replace optional notes / legacy narrative."""
 
-    raw_text: str = Field(..., min_length=1)
+    raw_text: str = Field(default="", min_length=0)
 
 
 class ExperienceContextOut(BaseModel):
@@ -24,7 +24,7 @@ class ExperienceContextOut(BaseModel):
 
 
 class SkillEvidenceIn(BaseModel):
-    source_type: str = Field(default="project", pattern="^(role|project)$")
+    source_type: str = Field(default="project", pattern="^(role|project|work_item)$")
     source_id: Optional[UUID] = None
     summary: str = Field(default="")
     metrics_json: Optional[dict[str, Any]] = None
@@ -62,6 +62,51 @@ class SkillOut(BaseModel):
     evidence: list[SkillEvidenceOut] = Field(default_factory=list)
 
 
+class RoleWorkItemIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    summary: Optional[str] = None
+    technical: Optional[str] = None
+    tech: list[str] = Field(default_factory=list)
+
+
+class RoleWorkItemUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    summary: Optional[str] = None
+    technical: Optional[str] = None
+    tech: Optional[list[str]] = None
+
+
+class RoleWorkItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    role_id: UUID
+    name: str
+    summary: Optional[str] = None
+    technical: Optional[str] = None
+    tech: Optional[list[str]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RoleCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    org: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    ownership: Optional[str] = None
+    description: Optional[str] = None
+
+
+class RoleUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    org: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    ownership: Optional[str] = None
+    description: Optional[str] = None
+
+
 class RoleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,6 +117,27 @@ class RoleOut(BaseModel):
     end_date: Optional[date] = None
     ownership: Optional[str] = None
     description: Optional[str] = None
+    work_items: list[RoleWorkItemOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    problem: Optional[str] = None
+    architecture: Optional[str] = None
+    description: Optional[str] = None
+    tech: list[str] = Field(default_factory=list)
+    metrics_json: Optional[dict[str, Any]] = None
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    problem: Optional[str] = None
+    architecture: Optional[str] = None
+    description: Optional[str] = None
+    tech: Optional[list[str]] = None
+    metrics_json: Optional[dict[str, Any]] = None
 
 
 class ProjectOut(BaseModel):
@@ -84,6 +150,8 @@ class ProjectOut(BaseModel):
     description: Optional[str] = None
     tech: Optional[list[str]] = None
     metrics_json: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ExtractPreviewOut(BaseModel):
@@ -97,7 +165,6 @@ class ExtractPreviewOut(BaseModel):
     @field_validator("notes", mode="before")
     @classmethod
     def coerce_notes_to_str(cls, value: Any) -> Optional[str]:
-        """LLMs sometimes return notes as a list of strings — join them."""
         if value is None:
             return None
         if isinstance(value, list):
@@ -107,12 +174,6 @@ class ExtractPreviewOut(BaseModel):
 
 
 class ConfirmGraphRequest(BaseModel):
-    """User-accepted skill graph after review UI.
-
-    Default is merge: keep previously saved skills, upsert overlaps, append
-    new evidence. Set replace_existing=True to wipe skills not in this payload.
-    """
-
     skills: list[SkillIn]
     replace_existing: bool = False
 

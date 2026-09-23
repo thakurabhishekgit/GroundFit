@@ -1,5 +1,5 @@
 """
-Experience context, roles, and projects — source of truth for alignment.
+Experience context, roles, role work-items, and personal projects.
 """
 
 from datetime import date
@@ -16,9 +16,9 @@ from app.models.base import AuditModel
 
 class ExperienceContext(AuditModel, Base):
     """
-    One raw narrative dump per user (editable).
+    Optional notes / legacy narrative dump per user.
 
-    Structured skills/roles/projects hang off the same user_id.
+    Structured roles + projects are the primary source of truth going forward.
     """
 
     __tablename__ = "experience_contexts"
@@ -36,7 +36,7 @@ class ExperienceContext(AuditModel, Base):
 
 
 class Role(AuditModel, Base):
-    """Employment / internship entry extracted or entered by the user."""
+    """Employment / internship entry."""
 
     __tablename__ = "roles"
 
@@ -50,14 +50,43 @@ class Role(AuditModel, Base):
     org: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    ownership: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # owned|contributed|led
+    ownership: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     user = relationship("User", back_populates="roles", foreign_keys=[user_id])
+    work_items = relationship(
+        "RoleWorkItem",
+        back_populates="role",
+        foreign_keys="RoleWorkItem.role_id",
+        cascade="all, delete-orphan",
+    )
+
+
+class RoleWorkItem(AuditModel, Base):
+    """
+    Product / initiative under a company role (e.g. Ticket360 at Newmark).
+
+    Distinct from personal Project entries on the resume Projects section.
+    """
+
+    __tablename__ = "role_work_items"
+
+    role_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # what it does
+    technical: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tech: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
+
+    role = relationship("Role", back_populates="work_items", foreign_keys=[role_id])
 
 
 class Project(AuditModel, Base):
-    """Project entry with optional tech tags and metrics JSON."""
+    """Personal / side project (resume Projects section)."""
 
     __tablename__ = "projects"
 
@@ -68,8 +97,8 @@ class Project(AuditModel, Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    problem: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    architecture: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    problem: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # what it does
+    architecture: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # technical
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tech: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
     metrics_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)

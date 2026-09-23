@@ -87,6 +87,17 @@ function addDaysAt(days: number, hour = 23, minute = 59): { date: string; time: 
   };
 }
 
+type ListFilter = "all" | "open" | "applied" | "urgent" | "overdue" | "no_deadline";
+
+const FILTERS: { id: ListFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "open", label: "Not applied" },
+  { id: "applied", label: "Applied" },
+  { id: "urgent", label: "Due soon" },
+  { id: "overdue", label: "Overdue" },
+  { id: "no_deadline", label: "No deadline" },
+];
+
 export function ListsPage() {
   const { token } = useAuth();
   const [items, setItems] = useState<JobLink[]>([]);
@@ -96,6 +107,7 @@ export function ListsPage() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [filter, setFilter] = useState<ListFilter>("all");
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -107,6 +119,48 @@ export function ListsPage() {
     if (!iso) return null;
     return formatExpiry(iso);
   }, [form.expireDate, form.expireTime]);
+
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      const hrs = hoursUntil(item.expires_at);
+      const urgent = !item.applied && hrs != null && hrs >= 0 && hrs <= 12;
+      const overdue = !item.applied && hrs != null && hrs < 0;
+      switch (filter) {
+        case "open":
+          return !item.applied;
+        case "applied":
+          return item.applied;
+        case "urgent":
+          return urgent;
+        case "overdue":
+          return overdue;
+        case "no_deadline":
+          return !item.expires_at;
+        default:
+          return true;
+      }
+    });
+  }, [items, filter]);
+
+  const filterCounts = useMemo(() => {
+    const counts: Record<ListFilter, number> = {
+      all: items.length,
+      open: 0,
+      applied: 0,
+      urgent: 0,
+      overdue: 0,
+      no_deadline: 0,
+    };
+    for (const item of items) {
+      const hrs = hoursUntil(item.expires_at);
+      if (item.applied) counts.applied += 1;
+      else counts.open += 1;
+      if (!item.applied && hrs != null && hrs >= 0 && hrs <= 12) counts.urgent += 1;
+      if (!item.applied && hrs != null && hrs < 0) counts.overdue += 1;
+      if (!item.expires_at) counts.no_deadline += 1;
+    }
+    return counts;
+  }, [items, nowMs]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -342,14 +396,30 @@ export function ListsPage() {
         <section className="lists-cards">
           <div className="lists-cards-head">
             <h2 className="panel-title" style={{ margin: 0 }}>
-              Saved ({items.length})
+              Saved ({filteredItems.length}
+              {filter !== "all" ? ` / ${items.length}` : ""})
             </h2>
+            <div className="lists-filters" role="group" aria-label="Filter lists">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  className={`lists-filter${filter === f.id ? " active" : ""}`}
+                  onClick={() => setFilter(f.id)}
+                >
+                  {f.label}
+                  <span className="lists-filter-count">{filterCounts[f.id]}</span>
+                </button>
+              ))}
+            </div>
           </div>
           {items.length === 0 ? (
             <p className="muted">No links yet — add a job posting to remember later.</p>
+          ) : filteredItems.length === 0 ? (
+            <p className="muted">No links match this filter.</p>
           ) : (
             <div className="lists-grid">
-              {items.map((item) => {
+              {filteredItems.map((item) => {
                 const hrs = hoursUntil(item.expires_at);
                 const remaining = formatTimeRemaining(item.expires_at, nowMs);
                 const urgent =

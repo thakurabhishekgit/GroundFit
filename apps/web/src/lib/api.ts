@@ -23,6 +23,35 @@ export type Skill = {
   evidence: { id: string; summary: string; verified: boolean }[];
 };
 
+export type RoleWorkItem = {
+  id: string;
+  role_id: string;
+  name: string;
+  summary?: string | null;
+  technical?: string | null;
+  tech?: string[] | null;
+};
+
+export type ExperienceRole = {
+  id: string;
+  title: string;
+  org?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  ownership?: string | null;
+  description?: string | null;
+  work_items: RoleWorkItem[];
+};
+
+export type PersonalProject = {
+  id: string;
+  name: string;
+  problem?: string | null;
+  architecture?: string | null;
+  description?: string | null;
+  tech?: string[] | null;
+};
+
 export type Resume = {
   id: string;
   title: string;
@@ -114,6 +143,8 @@ export const api = {
     request<{
       context: { raw_text: string } | null;
       skills: Skill[];
+      roles: ExperienceRole[];
+      projects: PersonalProject[];
     }>("/api/v1/context", { token }),
 
   saveContext: (token: string, raw_text: string) =>
@@ -123,7 +154,7 @@ export const api = {
       body: JSON.stringify({ raw_text }),
     }),
 
-  extractContext: (token: string, raw_text: string) =>
+  extractContext: (token: string, raw_text = "") =>
     request<{
       skills: {
         name: string;
@@ -144,6 +175,80 @@ export const api = {
       token,
       body: JSON.stringify({ skills, replace_existing }),
     }),
+
+  createRole: (
+    token: string,
+    body: {
+      title: string;
+      org?: string | null;
+      start_date?: string | null;
+      end_date?: string | null;
+      ownership?: string | null;
+      description?: string | null;
+    }
+  ) =>
+    request<ExperienceRole>("/api/v1/context/roles", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  updateRole: (token: string, id: string, body: Record<string, unknown>) =>
+    request<ExperienceRole>(`/api/v1/context/roles/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  deleteRole: (token: string, id: string) =>
+    request<void>(`/api/v1/context/roles/${id}`, { method: "DELETE", token }),
+
+  createWorkItem: (
+    token: string,
+    roleId: string,
+    body: { name: string; summary?: string; technical?: string; tech?: string[] }
+  ) =>
+    request<RoleWorkItem>(`/api/v1/context/roles/${roleId}/work-items`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  updateWorkItem: (token: string, id: string, body: Record<string, unknown>) =>
+    request<RoleWorkItem>(`/api/v1/context/work-items/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  deleteWorkItem: (token: string, id: string) =>
+    request<void>(`/api/v1/context/work-items/${id}`, { method: "DELETE", token }),
+
+  createProject: (
+    token: string,
+    body: {
+      name: string;
+      problem?: string;
+      architecture?: string;
+      description?: string;
+      tech?: string[];
+    }
+  ) =>
+    request<PersonalProject>("/api/v1/context/projects", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  updateProject: (token: string, id: string, body: Record<string, unknown>) =>
+    request<PersonalProject>(`/api/v1/context/projects/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  deleteProject: (token: string, id: string) =>
+    request<void>(`/api/v1/context/projects/${id}`, { method: "DELETE", token }),
 
   listResumes: (token: string) => request<Resume[]>("/api/v1/resumes", { token }),
 

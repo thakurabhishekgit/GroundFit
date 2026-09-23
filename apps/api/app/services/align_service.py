@@ -249,8 +249,18 @@ async def run_alignment(
     try:
         skills = await _load_skills(db, user.id)
         skill_names = {s.name for s in skills}
+        from app.services.structure_service import (
+            build_structured_evidence_blob,
+            collect_tech_skill_names,
+        )
+
+        structured = await build_structured_evidence_blob(db, user.id)
+        skill_names |= await collect_tech_skill_names(db, user.id)
         covered = expand_covered_skills(skill_names)
-        evidence_blob = _format_evidence(skills)
+        skills_blob = _format_evidence(skills)
+        evidence_blob = "\n\n".join(
+            part for part in (structured, skills_blob) if part
+        ) or "(no verified skills yet)"
 
         jd_skills = await chat_json(
             system=JD_EXTRACT_SYSTEM,
@@ -380,7 +390,13 @@ async def finalize_alignment(
     """One-shot final rewrite from original resume + overrides; restore Projects."""
     resume = await _get_user_resume(db, user.id, run.resume_id)
     skills = await _load_skills(db, user.id)
-    evidence_blob = _format_evidence(skills)
+    from app.services.structure_service import build_structured_evidence_blob
+
+    structured = await build_structured_evidence_blob(db, user.id)
+    skills_blob = _format_evidence(skills)
+    evidence_blob = "\n\n".join(
+        part for part in (structured, skills_blob) if part
+    ) or "(no verified skills yet)"
 
     warnings = copy.deepcopy(list(run.warnings_json or []))
     # Undecided → skip (so Finalize is never blocked by leftover noise)

@@ -27,6 +27,7 @@ from app.schemas.context import (
 )
 from app.services.latex_utils import normalize_skill_name
 from app.services.openai_client import chat_json
+from app.services.structure_service import list_projects, list_roles
 
 
 EXTRACT_SYSTEM = """
@@ -259,20 +260,15 @@ async def get_context_bundle(db: AsyncSession, user: User) -> ContextBundleOut:
         .options(selectinload(Skill.evidence))
     )
     skills = list(skills_result.scalars().unique().all())
-    # filter soft-deleted evidence in python
     for skill in skills:
         skill.evidence = [e for e in skill.evidence if not e.is_deleted]
 
-    roles_result = await db.execute(
-        select(Role).where(Role.user_id == user.id, Role.is_deleted.is_(False))
-    )
-    projects_result = await db.execute(
-        select(Project).where(Project.user_id == user.id, Project.is_deleted.is_(False))
-    )
+    roles = await list_roles(db, user)
+    projects = await list_projects(db, user)
 
     return ContextBundleOut(
         context=ExperienceContextOut.model_validate(ctx) if ctx else None,
         skills=[SkillOut.model_validate(s) for s in skills],
-        roles=[RoleOut.model_validate(r) for r in roles_result.scalars().all()],
-        projects=[ProjectOut.model_validate(p) for p in projects_result.scalars().all()],
+        roles=roles,
+        projects=projects,
     )

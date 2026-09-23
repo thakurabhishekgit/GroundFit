@@ -1660,7 +1660,10 @@ select {
 }
 
 .lists-cards-head {
-  margin-bottom: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .lists-grid {
@@ -1775,3 +1778,216 @@ select {
 .danger-text {
   color: #c45c5c !important;
 }
+
+/* --- Structured context (left panel) --- */
+.context-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.context-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.context-left-scroll,
+.context-right-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ctx-page-nav {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.15rem;
+}
+
+.ctx-page-link {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.ctx-page-link:hover {
+  color: var(--ink);
+}
+
+.ctx-page-link.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.ctx-preview,
+.ctx-skills-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ctx-skills-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ctx-inline-form.bare {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.ctx-block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ctx-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+@media (max-width: 600px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ctx-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
+  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ctx-card-heading {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ctx-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.ctx-body {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  font-size: 0.9rem;
+}
+
+.ctx-subhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.25rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.ctx-nested {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ctx-nested p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.ctx-nested-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 10px;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.ctx-nested-form h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.ctx-tech {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+/* --- Lists filters --- */
+.lists-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.lists-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.lists-filter:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.lists-filter.active {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.lists-filter-count {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+

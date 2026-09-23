@@ -5,14 +5,7 @@ import type { AlignmentRun, Resume, Skill } from "../lib/api";
 import { latexToPreviewHtml } from "../lib/latexPreview";
 import { loadStoredLatex, saveStoredLatex } from "../lib/resumeStorage";
 
-type DraftSkill = {
-  name: string;
-  display_name?: string;
-  category?: string;
-  evidence: { source_type: string; summary: string }[];
-};
-
-type RightMode = "draft" | "saved";
+export { ContextPage } from "./ContextPage";
 
 export function AppLayout() {
   const { user, loading, logout } = useAuth();
@@ -105,189 +98,6 @@ export function AppLayout() {
       <main className="app-main">
         <Outlet />
       </main>
-    </div>
-  );
-}
-
-export function ContextPage() {
-  const { token } = useAuth();
-  const [rawText, setRawText] = useState("");
-  const [draftSkills, setDraftSkills] = useState<DraftSkill[]>([]);
-  const [savedSkills, setSavedSkills] = useState<Skill[]>([]);
-  const [rightMode, setRightMode] = useState<RightMode>("draft");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!token) return;
-    void (async () => {
-      try {
-        const { api } = await import("../lib/api");
-        const data = await api.getContext(token);
-        setRawText(data.context?.raw_text || "");
-        setSavedSkills(data.skills);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load context");
-      }
-    })();
-  }, [token]);
-
-  async function onExtract(e: FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const { api } = await import("../lib/api");
-      const preview = await api.extractContext(token, rawText);
-      setDraftSkills(preview.skills);
-      setRightMode("draft");
-      setMessage(
-        preview.notes || `Extracted ${preview.skills.length} skills — review then confirm.`
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Extract failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onConfirm() {
-    if (!token) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const { api } = await import("../lib/api");
-      const skills = await api.confirmContext(token, draftSkills);
-      setSavedSkills(skills);
-      setRightMode("saved");
-      setMessage(
-        `Merged into your graph — ${skills.length} skills total (kept past skills, added new ones).`
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Confirm failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function showSaved() {
-    setRightMode("saved");
-  }
-
-  function showDraft() {
-    setRightMode("draft");
-  }
-
-  return (
-    <div className="page-fixed">
-      <div className="grid-2">
-        <form className="card" onSubmit={onExtract}>
-          <h2 className="panel-title">Experience context</h2>
-          <p className="panel-sub muted">
-            Paste roles, projects, and where/why you used each technology. This is the
-            source of truth for alignment.
-          </p>
-          <div className="field grow">
-            <label htmlFor="raw">Raw narrative</label>
-            <textarea
-              id="raw"
-              value={rawText}
-              onChange={(e) => setRawText(e.target.value)}
-              placeholder="Paste your experience narrative: roles, projects, and where/why you used each technology…"
-              required
-            />
-          </div>
-          <div className="panel-footer">
-            <div className="row">
-              <button className="btn btn-primary" type="submit" disabled={busy}>
-                {busy ? "Working…" : "Extract skill graph"}
-              </button>
-              <button
-                type="button"
-                className={`pill pill-btn${rightMode === "saved" ? " active" : ""}`}
-                onClick={showSaved}
-                title="View saved skill graph"
-              >
-                {savedSkills.length} skills saved · view
-              </button>
-            </div>
-            {message && <p className="muted" style={{ margin: "0.65rem 0 0" }}>{message}</p>}
-            {error && <p className="error" style={{ marginTop: "0.65rem" }}>{error}</p>}
-          </div>
-        </form>
-
-        <div className="card">
-          <div className="row" style={{ justifyContent: "space-between", marginBottom: "0.5rem" }}>
-            <h2 className="panel-title" style={{ margin: 0 }}>
-              {rightMode === "saved" ? "Saved skill graph" : "Review draft"}
-            </h2>
-            {rightMode === "saved" && draftSkills.length > 0 && (
-              <button type="button" className="btn btn-ghost" onClick={showDraft}>
-                Back to draft
-              </button>
-            )}
-          </div>
-
-          {rightMode === "draft" ? (
-            draftSkills.length === 0 ? (
-              <p className="muted">Extracted skills will appear here for confirmation.</p>
-            ) : (
-              <>
-                <div className="panel-scroll">
-                  {draftSkills.map((skill) => (
-                    <div className="skill-item" key={skill.name}>
-                      <strong>{skill.display_name || skill.name}</strong>
-                      <span className="muted"> · {skill.category || "skill"}</span>
-                      <ul>
-                        {skill.evidence?.map((ev, i) => (
-                          <li key={i} className="muted">
-                            {ev.summary}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-                <div className="panel-footer">
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    onClick={onConfirm}
-                    disabled={busy}
-                  >
-                    {busy ? "Saving…" : "Confirm & merge into graph"}
-                  </button>
-                  <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-                    Keeps skills you already saved; only adds missing ones / new evidence.
-                  </p>
-                </div>
-              </>
-            )
-          ) : savedSkills.length === 0 ? (
-            <p className="muted">No skills saved yet. Extract and confirm a graph first.</p>
-          ) : (
-            <div className="panel-scroll">
-              {savedSkills.map((skill) => (
-                <div className="skill-item" key={skill.id}>
-                  <strong>{skill.display_name || skill.name}</strong>
-                  <span className="muted"> · {skill.category || "skill"}</span>
-                  <ul>
-                    {skill.evidence?.map((ev) => (
-                      <li key={ev.id} className="muted">
-                        {ev.summary}
-                        {ev.verified ? " ✓" : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -681,7 +491,11 @@ export function ProfilePage() {
         ]);
         setSkills(ctx.skills);
         setSkillCount(ctx.skills.length);
-        setHasContext(Boolean(ctx.context?.raw_text?.trim()));
+        setHasContext(
+          Boolean(ctx.context?.raw_text?.trim()) ||
+            (ctx.roles?.length ?? 0) > 0 ||
+            (ctx.projects?.length ?? 0) > 0
+        );
         setResumes(resumeList);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load profile");
